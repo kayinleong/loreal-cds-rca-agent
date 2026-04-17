@@ -1,0 +1,242 @@
+# TODO : Move this file to the B2C Repository
+main:
+    params: [args]
+    steps:
+    - assign_values:
+        assign:
+            - db_mapping_path: ${args.db_mapping_path}
+            - market_code: ${args.market_code}
+            - tables_to_run: ${args.tables_to_run}  # e.g., ["CONSUMER_PII", "PURCHASE"]
+    - run_tables:
+        for:
+            value: table_name
+            in: ${tables_to_run}
+            steps:
+                - prepare_params:
+                    switch:
+                        - condition: ${table_name == "lucid_pregenerate"}
+                          next: run_lucid_pregenerate
+                        - condition: ${table_name == "CONSUMER_PII_SPLITBATCH"}
+                          next: run_consumer_pii_splitbatches
+                        - condition: ${table_name == "CONSUMER_PII"}
+                          next: run_consumer_pii
+                        - condition: ${table_name == "CONSUMER_EXTRA"}
+                          next: run_consumer_extra
+                        - condition: ${table_name == "CONSUMER_MARKETING_PREFERENCES"}
+                          next: run_consumer_marketing_preferences
+                        - condition: ${table_name == "CONSUMER_ADDRESSES"}
+                          next: run_consumer_addresses
+                        - condition: ${table_name == "PURCHASE"}
+                          next: run_purchase
+                        - condition: ${table_name == "PURCHASE_ITEM"}
+                          next: run_purchase_item
+                        - condition: ${table_name == "SHIPMENT"}
+                          next: run_shipment
+                        - condition: ${table_name == "SHIPMENT_ADDRESSES"}
+                          next: run_shipment_addresses
+                        - condition: ${table_name == "LOCATION"}
+                          next: run_location
+                        - condition: ${table_name == "LOCATION_CEGID"}
+                          next: run_location_cegid
+                        - condition: ${table_name == "SALES_REP_CEGID"}
+                          next: run_sales_rep_cegid
+                        - condition: ${table_name == "CONSUMER_CALCULATED_ATTRIBUTES"}
+                          next: run_consumer_calculated_attributes
+                        - condition: ${table_name == "PRODUCT_HIERARCHY_MAP"}
+                          next: run_product_hierarchy_map
+                        - condition: ${table_name == "PRODUCT"}
+                          next: run_product
+                        - condition: ${table_name == "PRODUCT_HIERARCHY"}
+                          next: run_product_hierarchy
+                - run_lucid_pregenerate:
+                    call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+                    args:
+                        workflow_id: spacecds-wkf-load-target-table-cloudrun-<region_env>
+                        argument:
+                            market_code: ${market_code}
+                            table: "lucid_pregenerate" 
+                            sp_name: "sp_pregenerate_aesop_migr_anz_lucid"
+                            db_mapping_path: ${db_mapping_path}
+                    result: executionResponse
+                    next : end_step
+                - run_consumer_pii_splitbatches:
+                    call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+                    args:
+                        workflow_id: spacecds-wkf-load-target-table-cloudrun-<region_env>
+                        argument:
+                            market_code: ${market_code}
+                            table: "stg_consumer_pii" # stage table
+                            sp_name: "sp_customer_pii_splitbatches"
+                            db_mapping_path: ${db_mapping_path}
+                    result: executionResponse
+                    next : end_step                    
+                - run_consumer_pii:
+                    call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+                    args:
+                        workflow_id: spacecds-wkf-load-target-table-cloudrun-<region_env>
+                        argument:
+                            market_code: ${market_code}
+                            table: "stg_consumer_pii" # stage table
+                            sp_name: "sp_consumer_pii"
+                            db_mapping_path: ${db_mapping_path}
+                    result: executionResponse
+                    next : end_step
+                - run_consumer_extra:
+                    call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+                    args:
+                        workflow_id: spacecds-wkf-load-target-table-cloudrun-<region_env>
+                        argument:
+                            market_code: ${market_code}
+                            table: "stg_consumer_extra" # stage table
+                            sp_name: "sp_consumer_extra"
+                            db_mapping_path: ${db_mapping_path}
+                    result: executionResponse
+                    next : end_step
+                - run_consumer_marketing_preferences:
+                    call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+                    args:
+                        workflow_id: spacecds-wkf-load-target-table-cloudrun-<region_env>
+                        argument:
+                            market_code: ${market_code}
+                            table: "stg_consumer_marketing_preferences" # stage table
+                            sp_name: "sp_consumer_marketing_preferences"
+                            db_mapping_path: ${db_mapping_path}
+                    result: executionResponse
+                    next : end_step
+                - run_consumer_addresses:
+                    call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+                    args:
+                        workflow_id: spacecds-wkf-load-target-table-cloudrun-<region_env>
+                        argument:
+                            market_code: ${market_code}
+                            table: "stg_consumer_addresses" # stage table
+                            sp_name: "sp_consumer_addresses"
+                            db_mapping_path: ${db_mapping_path}
+                    result: executionResponse
+                    next : end_step
+                - run_purchase:
+                    call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+                    args:
+                        workflow_id: spacecds-wkf-load-target-table-cloudrun-<region_env>
+                        argument:
+                            market_code: ${market_code}
+                            table: "stg_migration_purchase" # stage table
+                            sp_name: "sp_purchase"
+                            db_mapping_path: ${db_mapping_path}
+                    result: executionResponse
+                    next : end_step
+                - run_purchase_item:
+                    call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+                    args:
+                        workflow_id: spacecds-wkf-load-target-table-cloudrun-<region_env>
+                        argument:
+                            market_code: ${market_code}
+                            table: "stg_migration_purchase_item" # stage table
+                            sp_name: "sp_purchase_item"
+                            db_mapping_path: ${db_mapping_path}
+                    result: executionResponse
+                    next : end_step
+                - run_shipment:
+                    call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+                    args:
+                        workflow_id: spacecds-wkf-load-target-table-cloudrun-<region_env>
+                        argument:
+                            market_code: ${market_code}
+                            table: "stg_migration_shipment" # stage table
+                            sp_name: "sp_shipment"
+                            db_mapping_path: ${db_mapping_path}
+                    result: executionResponse
+                    next : end_step
+                - run_shipment_addresses:
+                    call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+                    args:
+                        workflow_id: spacecds-wkf-load-target-table-cloudrun-<region_env>
+                        argument:
+                            market_code: ${market_code}
+                            table: "stg_migration_shipment_addresses" # stage table
+                            sp_name: "sp_shipment_addresses"
+                            db_mapping_path: ${db_mapping_path}
+                    result: executionResponse
+                    next : end_step
+                - run_location:
+                    call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+                    args:
+                        workflow_id: spacecds-wkf-load-target-table-cloudrun-<region_env>
+                        argument:
+                            market_code: ${market_code}
+                            table: "stg_migration_location" # stage table
+                            sp_name: "sp_location"
+                            db_mapping_path: ${db_mapping_path}
+                    result: executionResponse
+                    next : end_step
+                - run_location_cegid:
+                    call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+                    args:
+                        workflow_id: spacecds-wkf-load-target-table-cloudrun-<region_env>
+                        argument:
+                            market_code: ${market_code}
+                            table: "stg_location"
+                            sp_name: "sp_cds_location"
+                            db_mapping_path: ${db_mapping_path}
+                    result: executionResponse
+                    next : end_step
+                - run_sales_rep_cegid:
+                    call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+                    args:
+                        workflow_id: spacecds-wkf-load-target-table-cloudrun-<region_env>
+                        argument:
+                            market_code: ${market_code}
+                            table: "stg_sales_rep"
+                            sp_name: "sp_cds_sales_rep"
+                            db_mapping_path: ${db_mapping_path}
+                    result: executionResponse
+                    next : end_step
+                - run_consumer_calculated_attributes:
+                    call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+                    args:
+                        workflow_id: spacecds-wkf-load-target-table-cloudrun-<region_env>
+                        argument:
+                            market_code: ${market_code}
+                            table: "stg_consumer_calculated_attributes" # stage table
+                            sp_name: "sp_consumer_calculated_attributes"
+                            db_mapping_path: ${db_mapping_path}
+                    result: executionResponse
+                    next : end_step
+                - run_product_hierarchy_map:
+                    call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+                    args:
+                        workflow_id: spacecds-wkf-load-target-table-cloudrun-<region_env>
+                        argument:
+                            market_code: ${market_code}
+                            table: "stg_product_hierarchy_map" # stage table
+                            sp_name: "sp_product_hierarchy_map"
+                            db_mapping_path: ${db_mapping_path}
+                    result: executionResponse
+                    next : end_step  
+                - run_product:
+                    call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+                    args:
+                        workflow_id: spacecds-wkf-load-target-table-cloudrun-<region_env>
+                        argument:
+                            market_code: ${market_code}
+                            table: "stg_sap_product_hierarchy"
+                            sp_name: "sp_sap_product"
+                            db_mapping_path: ${db_mapping_path}
+                    result: executionResponse
+                    next : end_step 
+                - run_product_hierarchy:
+                    call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+                    args:
+                        workflow_id: spacecds-wkf-load-target-table-cloudrun-<region_env>
+                        argument:
+                            market_code: ${market_code}
+                            table: "stg_sap_product_hierarchy"
+                            sp_name: "sp_sap_product_hierarchy"
+                            db_mapping_path: ${db_mapping_path}
+                    result: executionResponse
+                    next : end_step           
+                - end_step:
+                    assign:
+                        - dummy_value : 0
+    - returnOutput:
+        return: "Completed"

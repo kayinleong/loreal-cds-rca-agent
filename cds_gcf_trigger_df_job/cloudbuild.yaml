@@ -1,0 +1,223 @@
+steps:
+
+#Check if the environment variables are set for the trigger
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:526.0.0'
+    script: |
+        set -e
+        #Checking the environment variables
+        if [ -z "${_ENV}" ]; then
+          echo "Error: Environment variable _ENV is not set in the trigger.";
+          exit 1;
+        fi
+        if [ -z "${_REGION}" ]; then
+          echo "Error: Environment variable _REGION is not set in the trigger.";
+          exit 1;
+        fi
+        if [ -z "${_SHORT_REGION_NAME}" ]; then
+          echo "Error: Environment variable _SHORT_REGION_NAME is not set in the trigger.";
+          exit 1;
+        fi
+        if [ -z "${_CLOUD_FUNCTION_NAME}" ]; then
+          echo "Error: Environment variable _CLOUD_FUNCTION_NAME is not set in the trigger.";
+          exit 1;
+        fi
+        if [ -z "${_CLOUD_FUNCTION_SA}" ]; then
+          echo "Error: Environment variable _CLOUD_FUNCTION_SA is not set in the trigger.";
+          exit 1;
+        fi
+        if [ -z "${_B2B_INBOUND_BUCKET_NAME}" ]; then
+          echo "Error: Environment variable _B2B_INBOUND_BUCKET_NAME is not set in the trigger.";
+          exit 1;
+        fi
+        if [ -z "${_B2C_INBOUND_BUCKET_NAME}" ]; then
+          echo "Error: Environment variable _B2C_INBOUND_BUCKET_NAME is not set in the trigger.";
+          exit 1;
+        fi
+        if [ -z "${_B2B_DATAFLOW_BATON_BUCKET_NAME}" ]; then
+          echo "Error: Environment variable _B2B_DATAFLOW_BATON_BUCKET_NAME is not set in the trigger.";
+          exit 1;
+        fi
+        if [ -z "${_B2C_DATAFLOW_BATON_BUCKET_NAME}" ]; then
+          echo "Error: Environment variable _B2C_DATAFLOW_BATON_BUCKET_NAME is not set in the trigger.";
+          exit 1;
+        fi
+        if [ -z "${_FUNCTION_ENTRYPOINT}" ]; then
+          echo "Error: Environment variable _FUNCTION_ENTRYPOINT is not set in the trigger.";
+          exit 1;
+        fi
+
+        # B2C PT INBOUND and BATON buckets should be verified on QA env only
+        if [ "${_ENV}" = "qa" ]; then
+          if [ -z "${_B2C_PT_INBOUND_BUCKET_NAME}" ]; then
+            echo "Error: _B2C_PT_INBOUND_BUCKET_NAME must be set for QA.";
+            exit 1;
+          fi
+          if [ -z "${_B2C_PT_DATAFLOW_BATON_BUCKET_NAME}" ]; then
+            echo "Error: _B2C_PT_DATAFLOW_BATON_BUCKET_NAME must be set for QA.";
+            exit 1;
+          fi
+        fi
+
+        echo "All required environment variables are set.";
+        
+        ######
+        cd cds_gcf_trigger_df_job
+
+        ##Deploy Cloud Function from source
+        echo "Deploying Cloud Function from source...";
+        
+        gcloud run deploy ${_CLOUD_FUNCTION_NAME}  \
+         --source=src \
+         --function=main \
+         --base-image=python312 \
+         --region=${_REGION} \
+         --service-account=${_CLOUD_FUNCTION_SA} \
+         --allow-unauthenticated \
+         --build-service-account=projects/${_PROJECT_ID}/serviceAccounts/${_CLOUD_FUNCTION_SA} \
+         --set-env-vars=ENV=${_ENV},SHORT_REGION_NAME=${_SHORT_REGION_NAME},REGION=${_REGION} \
+         --quiet
+
+        echo "Cloud Function deployed successfully";
+
+        # Wait for Cloud Function to be ready
+        echo "Waiting for Cloud Function to be ready..."
+        for i in {1..10}; do
+          URL=$(gcloud run services describe ${_CLOUD_FUNCTION_NAME} --region=${_REGION} --format="value(status.url)")
+          if [ -n "$URL" ]; then
+            echo "Cloud Function is ready at $URL."
+            break
+          fi
+          echo "Cloud Function not ready yet. Waiting 10 seconds..."
+          sleep 10
+        done
+
+        ##############
+        # Create Eventarc triggers for all 4 buckets
+
+        echo "Creating Eventarc triggers for all 4 buckets..."
+
+        # B2B Inbound trigger
+        TRIGGER_NAME1="${_CLOUD_FUNCTION_NAME}-b2b-inbound-trigger"
+        EXISTING=$(gcloud eventarc triggers list --location=${_REGION} --filter="name:triggers/${TRIGGER_NAME1}" --format="value(name)")
+        if [ -z "$EXISTING" ]; then
+          echo "Creating trigger for B2B Inbound bucket: ${_B2B_INBOUND_BUCKET_NAME}"
+          gcloud eventarc triggers create ${TRIGGER_NAME1} \
+            --location=${_REGION} \
+            --destination-run-service=${_CLOUD_FUNCTION_NAME} \
+            --destination-run-region=${_REGION} \
+            --event-filters="type=google.cloud.storage.object.v1.finalized" \
+            --event-filters="bucket=${_B2B_INBOUND_BUCKET_NAME}" \
+            --service-account=${_CLOUD_FUNCTION_SA}
+          echo "B2B Inbound trigger created successfully"
+        else
+          echo "Trigger ${TRIGGER_NAME1} already exists, skipping creation."
+        fi
+
+        # B2C Inbound trigger
+        TRIGGER_NAME2="${_CLOUD_FUNCTION_NAME}-b2c-inbound-trigger"
+        EXISTING=$(gcloud eventarc triggers list --location=${_REGION} --filter="name:triggers/${TRIGGER_NAME2}" --format="value(name)")
+        if [ -z "$EXISTING" ]; then
+          echo "Creating trigger for B2C Inbound bucket: ${_B2C_INBOUND_BUCKET_NAME}"
+          gcloud eventarc triggers create ${TRIGGER_NAME2} \
+            --location=${_REGION} \
+            --destination-run-service=${_CLOUD_FUNCTION_NAME} \
+            --destination-run-region=${_REGION} \
+            --event-filters="type=google.cloud.storage.object.v1.finalized" \
+            --event-filters="bucket=${_B2C_INBOUND_BUCKET_NAME}" \
+            --service-account=${_CLOUD_FUNCTION_SA}
+          echo "B2C Inbound trigger created successfully"
+        else
+          echo "Trigger ${TRIGGER_NAME2} already exists, skipping creation."
+        fi
+
+        # B2B Dataflow Baton trigger
+        TRIGGER_NAME3="${_CLOUD_FUNCTION_NAME}-b2b-baton-trigger"
+        EXISTING=$(gcloud eventarc triggers list --location=${_REGION} --filter="name:triggers/${TRIGGER_NAME3}" --format="value(name)")
+        if [ -z "$EXISTING" ]; then
+          echo "Creating trigger for B2B Dataflow Baton bucket: ${_B2B_DATAFLOW_BATON_BUCKET_NAME}"
+          gcloud eventarc triggers create ${TRIGGER_NAME3} \
+            --location=${_REGION} \
+            --destination-run-service=${_CLOUD_FUNCTION_NAME} \
+            --destination-run-region=${_REGION} \
+            --event-filters="type=google.cloud.storage.object.v1.finalized" \
+            --event-filters="bucket=${_B2B_DATAFLOW_BATON_BUCKET_NAME}" \
+            --service-account=${_CLOUD_FUNCTION_SA}
+          echo "B2B Dataflow Baton trigger created successfully"
+        else
+          echo "Trigger ${TRIGGER_NAME3} already exists, skipping creation."
+        fi
+
+        # B2C Dataflow Baton trigger
+        TRIGGER_NAME4="${_CLOUD_FUNCTION_NAME}-b2c-baton-trigger"
+        EXISTING=$(gcloud eventarc triggers list --location=${_REGION} --filter="name:triggers/${TRIGGER_NAME4}" --format="value(name)")
+        if [ -z "$EXISTING" ]; then
+          echo "Creating trigger for B2C Dataflow Baton bucket: ${_B2C_DATAFLOW_BATON_BUCKET_NAME}"
+          gcloud eventarc triggers create ${TRIGGER_NAME4} \
+            --location=${_REGION} \
+            --destination-run-service=${_CLOUD_FUNCTION_NAME} \
+            --destination-run-region=${_REGION} \
+            --event-filters="type=google.cloud.storage.object.v1.finalized" \
+            --event-filters="bucket=${_B2C_DATAFLOW_BATON_BUCKET_NAME}" \
+            --service-account=${_CLOUD_FUNCTION_SA}
+          echo "B2C Dataflow Baton trigger created successfully"
+        else
+          echo "Trigger ${TRIGGER_NAME4} already exists, skipping creation."
+        fi
+
+        ##################################################
+        # B2C PT INBOUND Triggers will be created on QA env
+        ##################################################        
+        if [ "${_ENV}" = "qa" ]; then
+          echo "creating B2C PT INBOUND triggers on QA environment"
+
+          # B2C PT INBOUND trigger
+          TRIGGER_NAME5="${_CLOUD_FUNCTION_NAME}-b2c-pt-inbound-trigger"
+          EXISTING=$(gcloud eventarc triggers list --location=${_REGION} --filter="name:triggers/${TRIGGER_NAME5}" --format="value(name)")
+          if [ -z "$EXISTING" ]; then
+            echo "Creating B2C PT INBOUND trigger for bucket: ${_B2C_PT_INBOUND_BUCKET_NAME}"
+            gcloud eventarc triggers create ${TRIGGER_NAME5} \
+              --location=${_REGION} \
+              --destination-run-service=${_CLOUD_FUNCTION_NAME} \
+              --destination-run-region=${_REGION} \
+              --event-filters="type=google.cloud.storage.object.v1.finalized" \
+              --event-filters="bucket=${_B2C_PT_INBOUND_BUCKET_NAME}" \
+              --service-account=${_CLOUD_FUNCTION_SA}
+            echo "B2C PT INBOUND trigger created successfully"
+          else
+            echo "B2C PT INBOUND trigger should be deployed only in QA environment hence skipping for DV and PD environments."
+          fi
+
+          # B2C PT DATAFLOW BATON Trigger
+          TRIGGER_NAME6="${_CLOUD_FUNCTION_NAME}-b2c-pt-baton-trigger"
+          EXISTING=$(gcloud eventarc triggers list --location=${_REGION} --filter="name:triggers/${TRIGGER_NAME6}" --format="value(name)")
+          if [ -z "$EXISTING" ]; then
+            echo "Creating B2C PT BATTON trigger for bucket: ${_B2C_PT_DATAFLOW_BATON_BUCKET_NAME}"
+            gcloud eventarc triggers create ${TRIGGER_NAME6} \
+              --location=${_REGION} \
+              --destination-run-service=${_CLOUD_FUNCTION_NAME} \
+              --destination-run-region=${_REGION} \
+              --event-filters="type=google.cloud.storage.object.v1.finalized" \
+              --event-filters="bucket=${_B2C_PT_DATAFLOW_BATON_BUCKET_NAME}" \
+              --service-account=${_CLOUD_FUNCTION_SA}
+            echo "B2C PT BATTON trigger created successfully"
+          else
+            echo "B2C PT BATON trigger should be deployed only in QA environment hence skipping for DV and PD environments."
+          fi
+        fi
+        ##############
+
+        # Verify deployment and triggers
+        echo "Verifying Cloud Function deployment...";
+        gcloud run services describe ${_CLOUD_FUNCTION_NAME} --region=${_REGION} --format="value(status.url)"
+
+        echo "Listing created Eventarc triggers...";
+        gcloud eventarc triggers list --location=${_REGION} --filter="name~${_CLOUD_FUNCTION_NAME}"
+
+        echo "Deployment and trigger creation completed successfully!";
+                  
+# ###################
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  automapSubstitutions: true
+  dynamicSubstitutions: true

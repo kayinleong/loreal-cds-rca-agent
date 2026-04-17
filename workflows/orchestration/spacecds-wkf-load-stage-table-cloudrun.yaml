@@ -1,0 +1,16 @@
+main:
+  params: [args]
+  steps:
+    - call_cloud_run:
+        call: http.post
+        args:
+          url: <url_stg_load>
+          auth:
+            type: OIDC # Use OIDC for Cloud Run authentication
+          headers:
+            Content-Type: application/json
+          body: ${args}
+        result: cloudRunResponse
+        next: return_result
+    - return_result:
+        return: ${cloudRunResponse.body}

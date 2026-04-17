@@ -1,0 +1,13 @@
+name: PR Template Generator
+
+on:
+  pull_request:
+    types: [opened] # Trigger when a PR is opened
+
+permissions:
+    pull-requests: write # Required for gh pr edit
+    contents: read       # Required to read repository content (even if not using custom templates directly, good practice)
+jobs:
+  inject_pr_template:
+    name: Inject PR Template
+    uses: oa-nasapmena-engineering/github-workflows/.github/workflows/pr-template-generator.yml@main # Path to your reusable workflow

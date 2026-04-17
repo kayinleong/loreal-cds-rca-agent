@@ -1,0 +1,25 @@
+# Secrets
+.env
+*.key
+*.pem
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Agent state (recreated per investigation)
+wiki/
+rca_reports/
+
+# ServiceNow data (fetched at runtime)
+my_reports/
+attachments/
+incident_reports/
+
+# IDE
+.idea/
+.vscode/
+*.swp

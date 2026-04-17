@@ -1,0 +1,20 @@
+name: SNOW Release checker
+
+on:
+  workflow_dispatch:
+
+# cancel old edit events being processed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  call-workflow:
+    uses: oa-nasapmena-engineering/github-workflows/.github/workflows/snow-release-checker.yml@main
+    secrets:
+      snow_agile_client_id: ${{ secrets.SNOW_AGILE_CLIENT_ID }}
+      snow_agile_client_secret: ${{ secrets.SNOW_AGILE_CLIENT_SECRET }}
+      snow_agile_scope: ${{ secrets.SNOW_AGILE_SCOPE }}
+    with:
+      required_tags: 'ETL'
+      approved_users: "XIU Henry, HUANG Marx, WONG Randall"

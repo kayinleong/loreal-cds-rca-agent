@@ -1,0 +1,131 @@
+main:
+  params: [args]
+  steps:
+    # Step 1a: Parse config_path
+    - parse_config_path:
+        assign:
+            - config_bucket: ${args.config_bucket}
+            - config_object: ${text.url_encode(args.config_object)}  #args.config_object
+    # Step 1b: Load config file from GCS
+    - load_config:
+        call: googleapis.storage.v1.objects.get
+        args:
+            bucket: ${config_bucket}
+            object: ${config_object}
+            alt: "media"  # gets object data
+        result: config_resp
+    # Step 2a: Parse state_file
+    - parse_state_file:
+        assign:
+        - state_bucket: ${args.config_bucket}
+        - state_object: ${text.url_encode(args.state_object)}
+    # Step 2b: Load workflow state from GCS
+    - load_state:
+        call: googleapis.storage.v1.objects.get
+        args:
+            bucket: ${state_bucket}
+            object: ${state_object}
+            alt: "media"  # gets object data
+        result: state_resp
+
+    # Step 3: Initialize variables
+    - initialize_variables:
+        assign:
+          - all_tasks: ${state_resp.all_tasks}
+          - completed_tasks: ${state_resp.completed_tasks}
+          - failed_tasks: ${state_resp.failed_tasks}
+          - pending_tasks: []
+          - i : 0
+
+    # Step 4: Find pending tasks
+    - find_tasks_to_run:
+        switch:
+            - condition:  ${default(map.get(args, "workflow_run_mode"), "full_run") == "full_run"}
+              next: all_task_append
+            - condition: ${args.workflow_run_mode == "retry_failed"}
+              next: failed_task_append
+            - condition: true
+              next: all_task_append
+    - all_task_append:
+        assign:
+            - tasks_to_run: ${all_tasks}
+            - state_resp.failed_tasks: []
+            - state_resp.completed_tasks: []
+        next : run_tasks
+    - failed_task_append:
+        assign:
+            - tasks_to_run: ${failed_tasks}
+            - state_resp.completed_tasks: []
+            - state_resp.failed_tasks: []
+        next : run_tasks
+    # - find_pending_tasks:
+    #     switch:
+    #         - condition: ${len(all_tasks) > i}
+    #           next: iterate
+    #     next: assign_tasks_to_run
+    # - iterate:
+    #     steps:
+    #         - check_if_pending:
+    #             switch:
+    #                 - condition: ${not(all_tasks[i] in completed_tasks)}
+    #                   next: conditional_append
+    #                 - condition: ${(all_tasks[i] in completed_tasks)}
+    #                   assign:
+    #                     - i: ${i+1}
+    #                   next: find_pending_tasks
+    #         - conditional_append:
+    #             assign:
+    #               - pending_tasks: ${list.concat(pending_tasks, all_tasks[i])}
+    #               - i: ${i+1}
+    #             next: find_pending_tasks
+    # Step 5: Combine pending and failed tasks
+    # - assign_tasks_to_run:
+    #     assign:
+    #       - tasks_to_run: ${pending_tasks} #${list.concat(pending_tasks, failed_tasks)}
+    # Step 4: Loop over tasks_to_run and trigger downstream workflow
+    - run_tasks:
+        for:
+          value: task
+          in: ${tasks_to_run}
+          steps:
+            - prepare_params:
+                assign:
+                  - params: ${config_resp[task]}
+                  # Optionally, override with args if needed:
+                  #- params: {"business_type":"b2b","config_path":"gs://space_cds_b2b-gcs-config-<region_env>/AU/CUSTOMER/STG_CUSTOMER.yaml","db_mapping_path":"gs://space_cds_b2b-gcs-config-<region_env>/db_config.yaml","domain":"customer","environment":"dv","gcs_uri_error":"gs://space_cds_b2b-gcs-batch_error-<region_env>/AU/SAP","gcs_uri_log":"gs://space_cds_b2b-gcs-batch_log-<region_env>/AU/SAP","input_path":"gs://space_cds_b2b-gcs-batch_inbound-<region_env>/AU/SAP/AU-CustomerMaster_20250420200402.01.csv","market_code":"default","table":"cds_stg.stg_customer","validation_json":"customerProfile"}
+            - run_task:
+                try:
+                    call: googleapis.workflowexecutions.v1.projects.locations.workflows.executions.run
+                    args:
+                        workflow_id: spacecds-wkf-load-stage-table-cloudrun-<region_env>
+                        argument: ${params}
+                    result: executionResponse
+                except:
+                    as : e
+                    steps:
+                        - add_failed_task:
+                            assign:
+                                - state_resp.failed_tasks : ${list.concat(state_resp.failed_tasks, task)} 
+            - check_for_complete:
+                switch:
+                    - condition : ${not(task in state_resp.failed_tasks)}
+                      next : add_completed_task
+                    - condition : true
+                      next : dummy_task
+            - add_completed_task:
+                assign:
+                - state_resp.completed_tasks : ${list.concat(state_resp.completed_tasks, task)}
+            - dummy_task :
+                assign:
+                    -  dummy_value : 1
+    - update_bucket:
+        call: googleapis.storage.v1.objects.insert                                  
+        args:
+            bucket: ${state_bucket}
+            name: ${args.state_object}
+            uploadType: "media"
+            body: ${state_resp}
+            contentEncoding : "application/json"
+    #Step 5: Return result
+    - done:
+        return: ${state_resp}

@@ -1,0 +1,30 @@
+# this file to be pushed to GCS bucket
+environments:
+  dv:
+    project_name: "oa-apmena-spacecds-ap-dv"
+    databases:
+      au: " space-cds-b2c-db-anz-ase1-dv"
+      sg: "anz_db_dv"
+    source_to_market_db:
+      "gs://dev-bucket/AU/": "anz_db"
+      "gs://dev-bucket/NZ/": "anz_db"
+      "gs://dev-bucket/SG/": "sg_db"
+  qa:
+    project_name: "oa-apmena-spacecds-ap-qa"
+    databases:
+      sg: "sg_db_qa"
+      anz: "anz_db_qa"
+    source_to_market_db:
+      "gs://qa-bucket/AU/": "anz_db"
+      "gs://qa-bucket/NZ/": "anz_db"
+      "gs://qa-bucket/SG/": "sg_db"
+  pd:
+    project_name: "oa-apmena-spacecds-ap-pd"
+    databases:
+      sg: "sg_db_pd"
+      anz: "anz_db_pd"
+    source_to_market_db:
+      "gs://prod-bucket/AU/": "anz_db"
+      "gs://prod-bucket/NZ/": "anz_db"
+      "gs://prod-bucket/SG/": "sg_db"
+

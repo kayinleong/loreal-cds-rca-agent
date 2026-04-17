@@ -1,0 +1,96 @@
+steps:
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:latest'
+    script: |
+        #!/usr/bin/env bash
+        # Checking the environment variables
+        if [ -z "${_MSNAME}" ]; then
+          echo "Error: Environment variable _MSNAME is not set in the trigger.";
+          exit 1;
+        fi
+        if [ -z "${_ENV}" ]; then
+          echo "Error: Environment variable _ENV is not set in the trigger.";
+          exit 1;
+        fi
+        if [ -z "${_REGION}" ]; then
+          echo "Error: Environment variable _REGION is not set in the trigger.";
+          exit 1;
+        fi
+        if [ -z "${_INSTANCE_CONNECTION_NAME}" ]; then
+          echo "Error: Environment variable _INSTANCE_CONNECTION_NAME is not set in the trigger.";
+          exit 1;
+        fi
+        if [ -z "${_B2C_DB_NAME}" ]; then
+          echo "Error: Environment variable _B2C_DB_NAME is not set in the trigger.";
+          exit 1;
+        fi
+        if [ -z "${_MS_SA_NAME}" ]; then
+          echo "Error: Environment variable _MS_SA_NAME is not set in the trigger.";
+          exit 1;
+        fi
+        if [ -z "${_VPC_NAME}" ]; then
+          echo "Error: Environment variable _VPC_NAME is not set in the trigger.";
+          exit 1;
+        fi
+        if [ -z "${_SUBNET_NAME}" ]; then
+          echo "Error: Environment variable _SUBNET_NAME is not set in the trigger.";
+          exit 1;
+        fi
+        if [ -z "${_EGRESS_SETTING}" ]; then
+          echo "Error: Environment variable _EGRESS_SETTING is not set in the trigger.";
+          exit 1;
+        fi
+        
+        echo "Building the Docker image...";
+        docker build -t asia-southeast1-docker.pkg.dev/oa-apmena-spacecds-ap-dv/spacecds-docker/${_MSNAME}:$SHORT_SHA -f staging_to_target_load/Dockerfile .
+
+        echo "Pushing the Docker image...";
+        docker push asia-southeast1-docker.pkg.dev/oa-apmena-spacecds-ap-dv/spacecds-docker/${_MSNAME}:$SHORT_SHA
+
+        echo "Docker image is pushed to the GAR";
+
+        if [ -f env.properties ]; then
+          echo "Processing environment variables file..."
+          tr '\n' ',' < env.properties | sed 's/,$//' > /workspace/env_vars.txt
+        else
+          echo "Warning: env.properties file not found!"
+        fi
+
+        echo "Deploying to Cloud Run with environment variables...";
+        gcloud run deploy space-cds-etl-tgt-load \
+            --image=asia-southeast1-docker.pkg.dev/oa-apmena-spacecds-ap-dv/spacecds-docker/${_MSNAME}:$SHORT_SHA \
+            --region=${_REGION} \
+            --add-cloudsql-instances=${_INSTANCE_CONNECTION_NAME} \
+            --platform=managed \
+            --set-env-vars="DB_NAME=${_B2C_DB_NAME}" \
+            --set-env-vars="INSTANCE_CONNECTION_NAME=${_INSTANCE_CONNECTION_NAME}" \
+            --set-env-vars="LOG_LEVEL=DEBUG" \
+            --set-env-vars="ENV=${_ENV}" \
+            --set-env-vars="TZ=UTC" \
+            --set-env-vars="INSTANCE_IP=${_INSTANCE_IP}" \
+            --set-env-vars="INSTANCE_PORT=${_INSTANCE_PORT}" \
+            --set-env-vars="INPUT_BUCKET=${_INPUT_BUCKET}" \
+            --set-env-vars="CONFIG_BUCKET=${_CONFIG_BUCKET}" \
+            --set-env-vars="GCS_LOG_BUCKET=${_GCS_LOG_BUCKET}" \
+            --set-env-vars="GCS_ERROR_BUCKET=${_GCS_ERROR_BUCKET}" \
+            --set-env-vars="DB_MAPPING_BUCKET=${_DB_MAPPING_BUCKET}" \
+            --set-env-vars="ARCHIVE_BUCKET=${_ARCHIVE_BUCKET}" \
+            --memory=1024Mi \
+            --service-account="${_MS_SA_NAME}" \
+            --network="${_VPC_NAME}" \
+            --subnet="${_SUBNET_NAME}" \
+            --vpc-egress="${_EGRESS_SETTING}" \
+            --set-secrets="DB_USER=space_cds-srt-cloudsql_b2c_user:latest,DB_CREDENTIAL=space_cds-srt-cloudsql_b2c_pwd:latest" \
+            --allow-unauthenticated || {
+              echo "Error: Cloud Run deployment failed!"
+              exit 1
+            }
+
+
+
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  automapSubstitutions: true
+  dynamicSubstitutions: true
+  pool:
+    name: '${_WORKER_POOL}'

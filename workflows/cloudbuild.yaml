@@ -1,0 +1,46 @@
+
+steps:
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    script: |
+        #!/usr/bin/env bash
+        # Checking the environment variables
+        if [ -z "${_GCS_BUCKET_NAME}" ]; then
+          echo "Error: Environment variable _GCS_BUCKET_NAME is not set in the trigger.";
+          exit 1;
+        fi
+        if [ -z "${_ENV}" ]; then
+          echo "Error: Environment variable _ENV is not set in the trigger.";
+          exit 1;
+        fi
+        if [ -z "${_REGION_ENV}" ]; then
+          echo "Error: Environment variable _REGION_ENV is not set in the trigger.";
+          exit 1;
+        fi
+        if [ -z "${_URL_STG_LOAD}" ]; then
+          echo "Error: Environment variable _URL_STG_LOAD is not set in the trigger.";
+          exit 1;
+        fi
+        if [ -z "${_URL_TGT_LOAD}" ]; then
+          echo "Error: Environment variable _URL_TGT_LOAD is not set in the trigger.";
+          exit 1;
+        fi
+        echo "All environment variables are set. Proceeding with the build."
+
+        # Replace patterns in all files under the workflows folder
+        find workflows/ -type f | while read -r file; do
+        sed -i "s|<region_env>|${_REGION_ENV}|g" "$file"
+        sed -i "s|<url_stg_load>|${_URL_STG_LOAD}|g" "$file"
+        sed -i "s|<url_tgt_load>|${_URL_TGT_LOAD}|g" "$file"
+        done
+
+        # Copy modified workflows/orchestration files to the parameterized path in the environment bucket
+        gsutil -m cp workflows/orchestration/* gs://${_GCS_BUCKET_NAME}/orchestration/
+
+        # Copy config.json and stateFile.json to the specific folder path in the bucket
+        gsutil -m cp workflows/env-config/${_ENV}/config.json gs://${_GCS_BUCKET_NAME}/workflow-state/config.json
+        gsutil -m cp workflows/env-config/${_ENV}/stateFile.json gs://${_GCS_BUCKET_NAME}/workflow-state/stateFile.json
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  automapSubstitutions: true
+  dynamicSubstitutions: true
