@@ -21,6 +21,7 @@ mcp-servers:
     type: local
     command: .venv/bin/python
     args:
+      - -u
       - rca_copilot_agent/mcp_server.py
     env:
       COOKIE: ${{ secrets.SNOW_COOKIE }}
