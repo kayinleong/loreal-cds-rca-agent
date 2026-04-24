@@ -184,7 +184,8 @@ Thumbs.db
 *.swo
 *~
 .idea/
-.vscode/
+.vscode/*
+!.vscode/mcp.json
 *.code-workspace
 .env.*
 !.env.example

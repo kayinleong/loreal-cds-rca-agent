@@ -1,0 +1,17 @@
+{
+  "servers": {
+    "snow-mcp": {
+      "type": "stdio",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "args": ["-u", "${workspaceFolder}/rca_copilot_agent/mcp_server.py"],
+      "env": {
+        "SNOW_INSTANCE": "https://loreal.service-now.com",
+        "BQ_PROJECT": "oa-apmena-spacecds-ap-pd",
+        "BQ_DATASET": "space_cds_b2c_ds_replica_ae2_pd_public",
+        "BQ_MAX_BYTES": "500000000",
+        "BQ_TIMEOUT": "30",
+        "BQ_MAX_ROWS": "100"
+      }
+    }
+  }
+}

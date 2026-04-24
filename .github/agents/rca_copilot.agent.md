@@ -24,8 +24,6 @@ mcp-servers:
       - -u
       - rca_copilot_agent/mcp_server.py
     env:
-      COOKIE: ${{ secrets.SNOW_COOKIE }}
-      X_USERTOKEN: ${{ secrets.SNOW_X_USERTOKEN }}
       SNOW_INSTANCE: https://loreal.service-now.com
       BQ_PROJECT: oa-apmena-spacecds-ap-pd
       BQ_DATASET: space_cds_b2c_ds_replica_ae2_pd_public
