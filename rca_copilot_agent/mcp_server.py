@@ -317,6 +317,47 @@ def create_mcp_server(reports_dir: str):
                     "properties": {},
                 },
             ),
+            Tool(
+                name="download_attachments",
+                description=(
+                    "Download all attachments for a specific incident to the local attachments directory. "
+                    "Call this after get_incident_summary when the incident has images or files — "
+                    "attachment content is required for complete RCA analysis. "
+                    "Returns the list of downloaded file paths."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "incident_number": {
+                            "type": "string",
+                            "description": "Incident number, e.g. INC10403788",
+                        },
+                    },
+                    "required": ["incident_number"],
+                },
+            ),
+            Tool(
+                name="save_rca_report",
+                description=(
+                    "Save a completed RCA report to the local reports directory as a Markdown file. "
+                    "ALWAYS call this after generating the RCA report for each incident. "
+                    "Returns the path where the report was saved."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "incident_number": {
+                            "type": "string",
+                            "description": "Incident number, e.g. INC10403788",
+                        },
+                        "report_text": {
+                            "type": "string",
+                            "description": "The complete RCA report text (the ### WHAT HAPPENED ... block)",
+                        },
+                    },
+                    "required": ["incident_number", "report_text"],
+                },
+            ),
         ]
 
     @server.call_tool()
@@ -475,6 +516,55 @@ async def _dispatch(name: str, arguments: dict, reports_dir: str) -> str:
         for t in sorted(tables, key=lambda x: x["table_id"]):
             lines.append(f"{t['full_name']:<50} {t['num_rows']:>12,} {t['size_mb']:>10.1f}")
         return "\n".join(lines)
+
+    elif name == "download_attachments":
+        _ensure_store_loaded(reports_dir)
+        from tools.incident_store import get_store
+        number = arguments["incident_number"]
+        inc = get_store().get_incident(number)
+        if not inc:
+            return f"Incident {number} not found locally. Fetch it first with get_incident."
+
+        sys_id = inc.get("incident", {}).get("sys_id", "")
+        if not sys_id:
+            return f"Cannot determine sys_id for {number}."
+
+        reader, cfg = _build_reader()
+        safe_number = number.replace("/", "_").replace("\\", "_")
+        save_dir = os.path.join(cfg.attachments_dir, safe_number)
+        paths = reader.download_all_attachments("incident", sys_id, save_dir)
+
+        if not paths:
+            att = inc.get("attachments", {})
+            total = len(att.get("images", [])) + len(att.get("files", []))
+            if total == 0:
+                return f"No attachments found for {number}."
+            return f"Attachment metadata shows {total} file(s) but none could be downloaded. Check credentials."
+
+        lines = [f"Downloaded {len(paths)} attachment(s) for {number} → {save_dir}"]
+        for p in paths:
+            lines.append(f"  {os.path.basename(p)}")
+        return "\n".join(lines)
+
+    elif name == "save_rca_report":
+        number = arguments["incident_number"]
+        report_text = arguments["report_text"]
+        safe_number = number.replace("/", "_").replace("\\", "_")
+
+        rca_dir = os.path.join(reports_dir, "rca_reports")
+        os.makedirs(rca_dir, exist_ok=True)
+
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{safe_number}_rca_{timestamp}.md"
+        filepath = os.path.join(rca_dir, filename)
+
+        with open(filepath, "w", encoding="utf-8") as fh:
+            fh.write(f"# RCA Report — {number}\n\n")
+            fh.write(f"_Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}_\n\n")
+            fh.write(report_text)
+
+        return f"✓ RCA report saved: {filepath}"
 
     else:
         return f"Unknown tool: {name}"

@@ -16,6 +16,8 @@ tools:
   - snow-mcp/query_bigquery
   - snow-mcp/get_schema
   - snow-mcp/list_bq_tables
+  - snow-mcp/download_attachments
+  - snow-mcp/save_rca_report
 mcp-servers:
   snow-mcp:
     type: local
@@ -94,18 +96,25 @@ Carry the detected intent through all subsequent steps — do not ask the user t
 1. Call `get_incident_summary` for that number.
    - If it returns "not found in local data", call `get_incident` to fetch it live first.
 2. Read the full summary carefully: description, all comments, all work notes.
-3. Call `extract_identifiers` to surface order IDs, emails, EAN codes.
-4. Call `search_incidents` for key error messages or terms if you need broader context.
-5. **If order IDs or pipeline identifiers were found**, call `get_schema` to find relevant tables,
+3. **If the summary mentions attachments (images or files)**, call `download_attachments` for that incident number to retrieve them. Note the file paths returned — reference them in the "WHAT WE CHECKED" section.
+4. Call `extract_identifiers` to surface order IDs, emails, EAN codes.
+5. Call `search_incidents` for key error messages or terms if you need broader context.
+6. **If order IDs or pipeline identifiers were found**, call `get_schema` to find relevant tables,
    then call `query_bigquery` to look up the order/event data in BigQuery.
-6. Produce the RCA report (see format below). Output ONLY the RCA block — nothing else.
+7. Produce the RCA report (see format below).
+8. Call `save_rca_report` with the incident number and the full report text. Output the saved path on a single line: `Report saved: <path>`.
+9. Output ONLY the RCA block followed by the saved path line — nothing else.
 
 **Batch mode** (no specific ticket, or user said "all tickets"):
 
 1. Call `list_incidents` to get all available tickets.
-2. For each open (non-resolved/closed) incident, call `get_incident_summary`.
-3. Follow steps 3–5 above for each incident.
-4. Output one RCA block per incident, separated by `---`. Nothing else before or after.
+2. For each open (non-resolved/closed) incident:
+   a. Call `get_incident_summary`.
+   b. Call `download_attachments` if the incident has attachments.
+   c. Follow steps 4–6 above.
+   d. Produce the RCA report.
+   e. Call `save_rca_report` for that incident.
+3. Output one RCA block per incident, separated by `---`. Append each saved path below its RCA block. Nothing else before or after.
 
 ### Step 3 — Post the RCA as a comment (only when "post comment" intent detected)
 
