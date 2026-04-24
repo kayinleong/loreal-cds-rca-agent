@@ -426,14 +426,28 @@ async def _dispatch(name: str, arguments: dict, reports_dir: str) -> str:
         number = arguments["incident_number"]
         download = arguments.get("download_attachments", False)
 
-        # Look up sys_id from the number
-        rec = reader.get_incident_by_number(number)
+        # Detect table from number prefix
+        if number.upper().startswith("RITM"):
+            table = "sc_req_item"
+        elif number.upper().startswith("TASK"):
+            table = "sc_task"
+        else:
+            table = "incident"
+
+        records = reader.search_records(
+            table=table,
+            query=f"number={number}",
+            limit=1,
+            fields="sys_id,number,short_description,state",
+        )
+        rec = records[0] if records else None
         if not rec:
-            return f"Incident {number} not found in ServiceNow."
+            return f"Incident {number} not found in ServiceNow (searched table: {table})."
 
         sys_id = rec["sys_id"]
         report = reader.get_full_incident_report(
             sys_id=sys_id,
+            table_name=table,
             download_files=download,
             attachments_dir=cfg.attachments_dir,
         )
@@ -475,10 +489,25 @@ async def _dispatch(name: str, arguments: dict, reports_dir: str) -> str:
         if not inc:
             try:
                 reader, cfg = _build_reader()
-                rec = reader.get_incident_by_number(number)
+                # Detect table from number prefix: RITM → sc_req_item, else incident
+                if number.upper().startswith("RITM"):
+                    table = "sc_req_item"
+                elif number.upper().startswith("TASK"):
+                    table = "sc_task"
+                else:
+                    table = "incident"
+
+                records = reader.search_records(
+                    table=table,
+                    query=f"number={number}",
+                    limit=1,
+                    fields="sys_id,number,short_description,state",
+                )
+                rec = records[0] if records else None
                 if rec:
                     report = reader.get_full_incident_report(
                         sys_id=rec["sys_id"],
+                        table_name=table,
                         download_files=False,
                         attachments_dir=cfg.attachments_dir,
                     )
@@ -597,14 +626,23 @@ async def _dispatch(name: str, arguments: dict, reports_dir: str) -> str:
         if not inc:
             return f"Incident {number} not found locally. Fetch it first with get_incident."
 
-        sys_id = inc.get("incident", {}).get("sys_id", "")
+        incident_meta = inc.get("incident", {})
+        sys_id = incident_meta.get("sys_id", "")
         if not sys_id:
             return f"Cannot determine sys_id for {number}."
+
+        # Detect the source table from the ticket number prefix
+        if number.upper().startswith("RITM"):
+            att_table = "sc_req_item"
+        elif number.upper().startswith("TASK"):
+            att_table = "sc_task"
+        else:
+            att_table = "incident"
 
         reader, cfg = _build_reader()
         safe_number = number.replace("/", "_").replace("\\", "_")
         save_dir = os.path.join(cfg.attachments_dir, safe_number)
-        paths = reader.download_all_attachments("incident", sys_id, save_dir)
+        paths = reader.download_all_attachments(att_table, sys_id, save_dir)
 
         if not paths:
             att = inc.get("attachments", {})

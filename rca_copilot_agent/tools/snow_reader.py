@@ -289,13 +289,23 @@ class ServiceNowReader:
 
     # ── COMMENTS & WORK NOTES ─────────────────────────────────────────────────
 
-    def get_comments(self, sys_id: str, include_work_notes: bool = True) -> list[dict]:
+    def get_comments(
+        self,
+        sys_id: str,
+        include_work_notes: bool = True,
+        table_name: str = None,
+    ) -> list[dict]:
         """
         Get structured journal entries (comments + work notes) for a record.
 
         Returns list of dicts: {element, value, sys_created_on, sys_created_by}
         """
         query_parts = [f"element_id={sys_id}"]
+        # ServiceNow ACLs on sys_journal_field require the source table name;
+        # without it, entries for non-incident tables (e.g. sc_req_item) are
+        # silently filtered out.
+        if table_name:
+            query_parts.append(f"name={table_name}")
         if not include_work_notes:
             query_parts.append("element=comments")
         query_parts.append("ORDERBYDESCsys_created_on")
@@ -306,20 +316,26 @@ class ServiceNowReader:
                 params={
                     "sysparm_query": "^".join(query_parts),
                     "sysparm_limit": 500,
+                    "sysparm_display_value": "true",
                 },
             )
-            return resp.json().get("result", [])
+            result = resp.json().get("result", [])
+            if result:
+                return result
+            # sys_journal_field returned 200 but empty list — ACLs silently
+            # filter work notes for many cookie-auth sessions; fall through to inline.
+            print("[COMMENTS] sys_journal_field returned empty; falling back to inline.", file=sys.stderr)
         except Exception as e:
             print(f"[COMMENTS] sys_journal_field failed: {e}; trying inline.", file=sys.stderr)
-            return self._get_inline_comments(sys_id)
+        return self._get_inline_comments(sys_id, table_name=table_name or _INCIDENT_TABLE)
 
-    def _get_inline_comments(self, sys_id: str) -> list[dict]:
-        """Fallback: read comments from the story record when journal access is restricted."""
+    def _get_inline_comments(self, sys_id: str, table_name: str = _STORY_TABLE) -> list[dict]:
+        """Fallback: read comments directly from the record when journal access is restricted."""
         params = {
             "sysparm_fields": "comments,work_notes",
             "sysparm_display_value": "true",
         }
-        resp = self._get(f"/api/now/table/{_STORY_TABLE}/{sys_id}", params=params)
+        resp = self._get(f"/api/now/table/{table_name}/{sys_id}", params=params)
         record = resp.json().get("result", {})
         entries = []
         for field in ("comments", "work_notes"):
@@ -411,7 +427,7 @@ class ServiceNowReader:
             Structured report dict compatible with IncidentStore.
         """
         incident = self.get_record(table_name, sys_id)
-        journal = self.get_comments(sys_id, include_work_notes=True)
+        journal = self.get_comments(sys_id, include_work_notes=True, table_name=table_name)
         comments = [e for e in journal if e.get("element") == "comments"]
         work_notes = [e for e in journal if e.get("element") == "work_notes"]
 
