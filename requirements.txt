@@ -1,0 +1,11 @@
+# RCA Copilot Agent — Dependencies
+# No LLM libraries; GitHub Copilot provides the reasoning.
+
+# HTTP client for ServiceNow REST API
+requests>=2.31
+
+# MCP server (Model Context Protocol SDK)
+mcp>=1.0.0
+
+# BigQuery client (required for query_bigquery / get_schema / list_bq_tables tools)
+google-cloud-bigquery>=3.0

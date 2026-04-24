@@ -45,8 +45,15 @@ except ImportError:
     sys.exit(1)
 
 
-# ── Tesseract binary path (Windows default) ─────────────────────────────────
+# ── Tesseract binary paths (macOS / Linux / Windows) ────────────────────────
 TESSERACT_CMD_CANDIDATES = [
+    # macOS — Homebrew Apple Silicon
+    "/opt/homebrew/bin/tesseract",
+    # macOS — Homebrew Intel
+    "/usr/local/bin/tesseract",
+    # Linux
+    "/usr/bin/tesseract",
+    # Windows
     r"C:\Program Files\Tesseract-OCR\tesseract.exe",
     r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
     r"C:\Users\{}\AppData\Local\Programs\Tesseract-OCR\tesseract.exe".format(
