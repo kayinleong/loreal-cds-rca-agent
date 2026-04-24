@@ -1,8 +1,0 @@
-{
-    "all_tasks": [
-        "STG_MIGRATION_PURCHASE",
-        "STG_MIGRATION_PURCHASE_ITEM"
-    ],
-    "completed_tasks": [],
-    "failed_tasks": []
-}
