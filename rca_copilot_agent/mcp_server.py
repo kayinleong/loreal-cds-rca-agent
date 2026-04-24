@@ -187,6 +187,27 @@ def create_mcp_server(reports_dir: str):
                 },
             ),
             Tool(
+                name="analyze_incident",
+                description=(
+                    "ONE-STOP analysis tool for a single incident. "
+                    "Fetches full incident data, downloads all attachments, and extracts "
+                    "structured identifiers in a single call. "
+                    "ALWAYS use this instead of calling get_incident_summary + "
+                    "extract_identifiers + download_attachments separately. "
+                    "Returns the complete context needed to write the RCA report."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "incident_number": {
+                            "type": "string",
+                            "description": "Incident number, e.g. INC10403788",
+                        },
+                    },
+                    "required": ["incident_number"],
+                },
+            ),
+            Tool(
                 name="search_incidents",
                 description=(
                     "Search all locally stored incident text for a keyword. "
@@ -442,6 +463,57 @@ async def _dispatch(name: str, arguments: dict, reports_dir: str) -> str:
         _ensure_store_loaded(reports_dir)
         from tools.incident_store import get_store
         return get_store().list_all(max_incidents=arguments.get("max_count", 100))
+
+    elif name == "analyze_incident":
+        number = arguments["incident_number"]
+        _ensure_store_loaded(reports_dir)
+        from tools.incident_store import get_store
+        store = get_store()
+
+        # Fetch live if not in local store
+        inc = store.get_incident(number)
+        if not inc:
+            try:
+                reader, cfg = _build_reader()
+                rec = reader.get_incident_by_number(number)
+                if rec:
+                    report = reader.get_full_incident_report(
+                        sys_id=rec["sys_id"],
+                        download_files=False,
+                        attachments_dir=cfg.attachments_dir,
+                    )
+                    reader.upsert_incident_report(report, reports_dir=reports_dir)
+                    combined = os.path.join(reports_dir, "_all_incidents.json")
+                    if os.path.exists(combined):
+                        from tools.incident_store import load_store
+                        load_store(combined)
+                    store = get_store()
+            except Exception as e:
+                return f"Could not fetch {number} from ServiceNow: {e}. Call fetch_incidents first."
+
+        # 1. Full incident summary
+        summary = store.get_incident_summary(number)
+
+        # 2. Structured identifiers
+        ids = store.extract_identifiers(number)
+        ids_section = (
+            f"IDENTIFIERS FOUND:\n{json.dumps(ids, indent=2)}"
+            if ids
+            else "IDENTIFIERS: None found (no order IDs, emails, or EAN codes)."
+        )
+
+        # 3. Download attachments
+        attachment_section = "ATTACHMENTS: None."
+        inc = store.get_incident(number)
+        if inc:
+            att = inc.get("attachments", {})
+            total = len(att.get("images", [])) + len(att.get("files", []))
+            if total > 0:
+                attachment_section = await _dispatch(
+                    "download_attachments", {"incident_number": number}, reports_dir
+                )
+
+        return "\n\n".join([summary, ids_section, attachment_section])
 
     elif name == "search_incidents":
         _ensure_store_loaded(reports_dir)
