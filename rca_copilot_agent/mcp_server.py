@@ -566,8 +566,16 @@ async def _dispatch(name: str, arguments: dict, reports_dir: str) -> str:
         text = arguments["text"]
         as_work_note = arguments.get("as_work_note", False)
 
-        # Resolve sys_id — try local store first, then live lookup
-        sys_id = _resolve_sys_id(number, reader, reports_dir)
+        # Detect correct table from ticket number prefix
+        if number.upper().startswith("RITM"):
+            table = "sc_req_item"
+        elif number.upper().startswith("TASK"):
+            table = "sc_task"
+        else:
+            table = "incident"
+
+        # Resolve sys_id — try local store first, then live lookup on correct table
+        sys_id = _resolve_sys_id(number, reader, reports_dir, table=table)
         if not sys_id:
             return f"Cannot resolve sys_id for {number}. Fetch the incident first."
 
@@ -575,6 +583,7 @@ async def _dispatch(name: str, arguments: dict, reports_dir: str) -> str:
             incident_sys_id=sys_id,
             text=text,
             as_work_note=as_work_note,
+            table=table,
         )
         label = "work note" if as_work_note else "comment"
         if success:
@@ -697,19 +706,24 @@ def _ensure_store_loaded(reports_dir: str) -> None:
             )
 
 
-def _resolve_sys_id(number: str, reader, reports_dir: str) -> str:
+def _resolve_sys_id(number: str, reader, reports_dir: str, table: str = "incident") -> str:
     """
     Resolve an incident number to its sys_id.
-    Tries the local store first; falls back to a live ServiceNow search.
+    Tries the local store first; falls back to a live ServiceNow search on the correct table.
     """
     from tools.incident_store import get_store
     inc = get_store().get_incident(number)
     if inc:
         return inc.get("incident", {}).get("sys_id", "")
 
-    # Live lookup
-    rec = reader.get_incident_by_number(number)
-    return rec.get("sys_id", "") if rec else ""
+    # Live lookup — must search the correct table (RITM → sc_req_item, TASK → sc_task)
+    records = reader.search_records(
+        table=table,
+        query=f"number={number}",
+        limit=1,
+        fields="sys_id,number,short_description,state",
+    )
+    return records[0].get("sys_id", "") if records else ""
 
 
 # ── Fallback: JSON-RPC over stdin/stdout (no mcp SDK) ─────────────────────────
