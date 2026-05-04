@@ -266,6 +266,22 @@ class IncidentStore:
             if matches:
                 ids.setdefault("user_ids", []).extend(matches)
 
+        # Customer / store codes: 2-letter country prefix + store digits + consumer digits
+        # e.g. VN0210468003452, TH0101123456789, MY0301987654321
+        for pat in [
+            r"(?:customer[_ ]?code|consumer[_ ]?code|store[_ ]?code)\s*[:=]?\s*([A-Z]{2}\d{6,})",
+            r"\b([A-Z]{2}\d{4}[A-Z0-9]{5,15})\b",
+        ]:
+            matches = re.findall(pat, combined, re.IGNORECASE)
+            if matches:
+                ids.setdefault("customer_codes", []).extend(matches)
+
+        # Phone numbers: 9-15 digits, optionally prefixed with + or country code
+        phone_matches = re.findall(r"\b(\+?[\d][\d\s\-]{7,13}[\d])\b", combined)
+        clean_phones = [re.sub(r"[\s\-]", "", p) for p in phone_matches if len(re.sub(r"[\s\-]", "", p)) >= 9]
+        if clean_phones:
+            ids["phone_numbers"] = list(set(clean_phones))
+
         eans = re.findall(r"\b(\d{13})\b", combined)
         if eans:
             ids["ean_codes"] = list(set(eans))

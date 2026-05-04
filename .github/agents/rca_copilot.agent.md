@@ -33,13 +33,6 @@ mcp-servers:
       BQ_MAX_BYTES: "500000000"
       BQ_TIMEOUT: "30"
       BQ_MAX_ROWS: "100"
-      SMTP_HOST: ""
-      SMTP_PORT: "587"
-      SMTP_USE_TLS: "true"
-      SMTP_USER: ""
-      SMTP_PASSWORD: ""
-      SMTP_FROM: ""
-      SMTP_TO: ""
 ---
 
 ## ABSOLUTE TOOL RESTRICTION (READ THIS FIRST)
@@ -115,7 +108,7 @@ Carry the detected intent through all subsequent steps — do not ask the user t
    — Do NOT call `get_incident_summary`, `extract_identifiers`, or `download_attachments` separately.
 2. Read the returned context carefully: description, comments, work notes, attachment paths, identifiers.
 3. Call `search_incidents` for key error messages if you need broader context across other tickets.
-4. **If order IDs or pipeline identifiers were found:**
+4. **If ANY identifiers were found** (order IDs, customer codes, phone numbers, emails, EANs, LUCID, or any consumer/store reference):
    - Call `list_bq_tables` to identify which table to query (reads schema.json — instant, no BQ cost).
    - Call `get_schema <table_name>` to get column names, relationships, and ready-to-use query patterns.
    - Fill in identifier values in the pattern and call `query_bigquery`.
@@ -157,6 +150,7 @@ Carry the detected intent through all subsequent steps — do not ask the user t
 - Always include a `LIMIT` clause in every query.
 - Use backtick-quoted full refs, e.g.: `` `oa-apmena-spacecds-ap-pd.space_cds_b2c_ds_replica_ae2_pd_public.purchase` ``
 - Pass a `rationale` argument explaining what you are looking for.
+- **NEVER skip BigQuery** when the incident contains any of the following — even if no classic order ID is present: a customer code (e.g. `VN0210468003452`), phone number, email address, EAN, LUCID, or any other consumer/store identifier. If `analyze_incident` returns `IDENTIFIERS: None found`, re-read the incident description and comments manually for these patterns before concluding there is nothing to query.
 - Do not query BigQuery speculatively — only query when you have a concrete identifier from the incident.
 
 **Dataset selection:**
@@ -176,6 +170,8 @@ Carry the detected intent through all subsequent steps — do not ask the user t
 | Consumer email               | `consumer_pii`                   | `email`                              |
 | Consumer LUCID / MARS ID     | `consumer_pii`                   | `lucid`                              |
 | External consumer ID         | `external_system_ids`            | `sourceconsumerid`                   |
+| Customer code (e.g. `VN0210468003452`, country+store+digits) | `external_system_ids` | `sourceconsumerid` |
+| Phone number                 | `consumer_pii`                   | `phone` or `mobile`                  |
 | EAN code / barcode           | `product`                        | `ean` (also `purchase_item.eancode`) |
 | Delivery / shipping issue    | `shipment`                       | `sourceordernumber`                  |
 | Loyalty points issue         | `consumer_behaviour`             | `lucid`                              |

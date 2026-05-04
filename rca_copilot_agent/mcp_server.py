@@ -193,6 +193,10 @@ def create_mcp_server(reports_dir: str):
                     "structured identifiers in a single call. "
                     "ALWAYS use this instead of calling get_incident_summary + "
                     "extract_identifiers + download_attachments separately. "
+                    "Extracted identifiers include: order IDs, customer/store codes "
+                    "(e.g. VN0210468003452), phone numbers, emails, EAN codes, and LUCID/MARS IDs. "
+                    "If identifiers are found, ALWAYS follow up with query_bigquery — "
+                    "do NOT skip BQ even when no classic order ID is present. "
                     "Returns the complete context needed to write the RCA report."
                 ),
                 inputSchema={
