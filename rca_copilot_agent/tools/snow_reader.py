@@ -76,14 +76,27 @@ class ServiceNowReader:
         self.authenticated = True
 
     def validate(self) -> bool:
-        """Quick check that the current session can reach the API."""
+        """
+        Check that the current session can reach the API and returns valid JSON.
+
+        ServiceNow returns HTTP 200 with an HTML login page on expired sessions
+        (KB0966965) — checking only status_code == 200 is insufficient.
+        This method additionally verifies the Content-Type is application/json
+        and that the response body contains a 'result' key.
+        """
         try:
             resp = self.session.get(
                 f"{self.instance}/api/now/table/{_INCIDENT_TABLE}",
                 params={"sysparm_limit": 1, "sysparm_fields": "sys_id"},
                 timeout=15,
             )
-            return resp.status_code == 200
+            if resp.status_code != 200:
+                return False
+            ct = resp.headers.get("Content-Type", "")
+            if "application/json" not in ct:
+                return False
+            data = resp.json()
+            return "result" in data
         except Exception:
             return False
 
