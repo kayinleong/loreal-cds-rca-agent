@@ -67,7 +67,7 @@ def capture_credentials_via_browser(instance_url: str) -> tuple[str, str]:
         from playwright.async_api import async_playwright  # noqa: PLC0415
     except ImportError as exc:
         raise RuntimeError(
-            "playwright not installed. Run: pip install playwright && playwright install chromium"
+            "playwright not installed. Run: pip install playwright"
         ) from exc
 
     import asyncio  # noqa: PLC0415
@@ -80,7 +80,7 @@ def capture_credentials_via_browser(instance_url: str) -> tuple[str, str]:
 
         async def _inner() -> None:
             async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=False)
+                browser = await p.chromium.launch(channel="msedge", headless=False)
                 context = await browser.new_context()
                 page = await context.new_page()
 

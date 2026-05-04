@@ -11,5 +11,5 @@ mcp>=1.0.0
 google-cloud-bigquery>=3.0
 
 # Browser automation for automatic ServiceNow session capture (optional)
-# After installing, run: playwright install chromium
+# Uses the system-installed Microsoft Edge (no separate browser download needed)
 playwright>=1.50

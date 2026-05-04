@@ -33,14 +33,15 @@ Validate root causes with live BigQuery queries and produce structured RCA repor
 ### ServiceNow Credentials (auto-refreshed)
 
 At startup the MCP server checks whether `COOKIE` and `X_USERTOKEN` in `.env` are valid.
-If missing or expired, a Chromium browser window opens automatically for SSO login.
+If missing or expired, a Microsoft Edge window opens automatically for SSO login.
 Credentials are written back to `.env` after login — no manual DevTools copy-paste needed.
 
 **First-time setup (one-time only):**
 ```bash
 pip install playwright
-playwright install chromium
 ```
+
+Edge is already installed — no additional browser download required.
 
 If playwright is not installed, the server falls back to the manual instructions in `.env.example`.
 
