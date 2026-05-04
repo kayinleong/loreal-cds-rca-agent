@@ -870,6 +870,13 @@ def main() -> None:
     except Exception as auth_err:
         logger.warning(f"[AUTH] Credential check failed: {type(auth_err).__name__}: {auth_err}")
 
+    # Check gcloud ADC — must be a loreal.com account for BigQuery access.
+    try:
+        from tools.gcloud_tool import ensure_gcloud_auth
+        ensure_gcloud_auth()
+    except Exception as gcloud_err:
+        logger.warning(f"[GCLOUD] Auth check failed: {type(gcloud_err).__name__}: {gcloud_err}")
+
     # Run MCP server or fallback
     try:
         import mcp  # noqa: F401

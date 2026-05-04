@@ -27,6 +27,7 @@ Validate root causes with live BigQuery queries and produce structured RCA repor
 | `save_rca_report` | **MANDATORY** — save every completed RCA report to disk |
 | `send_rca_email` | **MANDATORY** — notify the human when the session is done |
 | `auto_credential_refresh` | Automatic startup tool — not callable; runs at MCP server start to detect and renew stale ServiceNow session cookies via browser SSO |
+| `auto_gcloud_auth` | Automatic startup tool — not callable; runs after SNOW auth to verify the active gcloud account is a loreal.com account and ADC is configured; triggers `gcloud auth application-default login` if not |
 
 ## Environment Setup
 
