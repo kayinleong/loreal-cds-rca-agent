@@ -360,49 +360,87 @@ def _format_additional_table(ds_key: str, ds_info: dict, matched: str) -> str:
 
 # ── Module-level tool functions (used by MCP server) ─────────────────────────
 
-_executor: Optional[SafeBigQueryExecutor] = None
+# Keyed by GCP project ID — one executor per billing project.
+_executors: dict[str, "SafeBigQueryExecutor"] = {}
 _dataset: Optional[str] = None
-
-
-def init_from_schema() -> None:
-    """
-    Initialize BQ executor from schema.json. No env vars required.
-    Uses gcloud Application Default Credentials for authentication.
-    """
-    global _executor, _dataset
-    schema = _load_schema_json()
-    project = schema["project"]
-    _dataset = schema["dataset"]
-    _executor = SafeBigQueryExecutor(
-        project=project,
-        max_bytes=500_000_000,
-        timeout=30.0,
-        max_rows=100,
-    )
-    logger.info(f"[BQ] Initialized from schema.json: {project}.{_dataset}")
-
+_default_project: Optional[str] = None
 
 _BQ_UNAVAILABLE = (
     "BigQuery is not available. Ensure schema.json exists in the repo root and "
     "gcloud ADC is configured (run: gcloud auth application-default login)."
 )
 
+# Regex to extract project IDs from backtick-quoted table refs, e.g.
+# `oa-apmena-spacecds-ap-dv.dataset.table`
+_PROJECT_RE = re.compile(r"`([a-z0-9_-]+)\.[^`]+`", re.IGNORECASE)
 
-def _get_executor() -> SafeBigQueryExecutor:
-    global _executor
-    if _executor is None:
+
+def init_from_schema() -> None:
+    """
+    Initialize one BQ executor per GCP project found in schema.json.
+    Uses gcloud Application Default Credentials — no env vars required.
+
+    One executor is created for the primary project and one for each
+    distinct project referenced in additional_datasets, so that queries
+    against DV tables are billed to the DV project (not the PD project).
+    """
+    global _executors, _dataset, _default_project
+    schema = _load_schema_json()
+    _default_project = schema["project"]
+    _dataset = schema["dataset"]
+
+    # Collect all distinct GCP projects mentioned in the schema
+    projects: set[str] = {_default_project}
+    for ds_key in schema.get("additional_datasets", {}):
+        # ds_key format: "project-id.dataset_name"
+        proj = ds_key.split(".")[0]
+        projects.add(proj)
+
+    _executors = {}
+    for proj in projects:
+        _executors[proj] = SafeBigQueryExecutor(
+            project=proj,
+            max_bytes=500_000_000,
+            timeout=30.0,
+            max_rows=100,
+        )
+        logger.info(f"[BQ] Initialized executor for project: {proj}")
+
+
+def _pick_executor(sql: str) -> "SafeBigQueryExecutor":
+    """
+    Return the executor whose billing project matches the first backtick-quoted
+    GCP project found in the SQL.  Falls back to the default project executor.
+    """
+    if not _executors:
         raise RuntimeError(_BQ_UNAVAILABLE)
-    return _executor
+    for match in _PROJECT_RE.finditer(sql):
+        proj = match.group(1)
+        if proj in _executors:
+            return _executors[proj]
+    if _default_project and _default_project in _executors:
+        return _executors[_default_project]
+    return next(iter(_executors.values()))
+
+
+def _get_executor() -> "SafeBigQueryExecutor":
+    if not _executors:
+        raise RuntimeError(_BQ_UNAVAILABLE)
+    if _default_project and _default_project in _executors:
+        return _executors[_default_project]
+    return next(iter(_executors.values()))
 
 
 def is_enabled() -> bool:
-    return _executor is not None
+    return bool(_executors)
 
 
 def query_bigquery(sql: str, rationale: str = "") -> str:
     """Execute a read-only BigQuery query. Returns LLM-friendly result string."""
-    executor = _get_executor()
-    logger.info(f"[BQ] {rationale}\n  SQL: {sql[:200]}")
+    if not _executors:
+        raise RuntimeError(_BQ_UNAVAILABLE)
+    executor = _pick_executor(sql)
+    logger.info(f"[BQ] billing_project={executor.project} | {rationale}\n  SQL: {sql[:200]}")
     result = executor.execute(sql)
     return result.to_llm_context()
 

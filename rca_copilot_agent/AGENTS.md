@@ -41,6 +41,8 @@ Validate root causes with live BigQuery queries and produce structured RCA repor
 3. Map extracted identifiers to table columns using the Key Tables table below.
 
 ### Phase 3 — VALIDATE
+**Run multiple queries. One query is never enough. If a query returns 0 rows, that IS a finding — investigate why.**
+
 For each hypothesis run one or more targeted queries:
 
 | Check | Pattern |
@@ -51,9 +53,69 @@ For each hypothesis run one or more targeted queries:
 | Null audit | `SELECT COUNTIF(field IS NULL) FROM t WHERE …` |
 | Date window | `SELECT MIN(ts), MAX(ts) FROM t WHERE …` |
 | Comparison | `SELECT a.f, b.f FROM a JOIN b ON … WHERE a.f != b.f LIMIT 10` |
+| Phone lookup | `SELECT customercode, customername, phonenumber FROM t WHERE REGEXP_REPLACE(phonenumber, r'\D', '') LIKE '%…%' LIMIT 5` |
 
-Always add a `LIMIT` clause. Use backtick table refs:
-`` `oa-apmena-spacecds-ap-pd`.`space_cds_b2c_ds_replica_ae2_pd_public`.table_name ``
+Always add a `LIMIT` clause. Use backtick table refs with the **full project.dataset.table path**:
+- B2C PD: `` `oa-apmena-spacecds-ap-pd.space_cds_b2c_ds_replica_ae2_pd_public.table_name` ``
+- B2B SEA DV: `` `oa-apmena-spacecds-ap-dv.space_cds_b2b_ds_replica_ase1_dv_cds_tgt.table_name` ``
+- B2B ME DV: `` `oa-apmena-spacecds-ap-dv.space_cds_b2b_ds_replica_ae2_dv_cds_tgt.table_name` ``
+
+**BigQuery billing projects:** The tool automatically routes jobs to the correct billing project based on the table reference. No action required — but always use the fully-qualified `` `project.dataset.table` `` form.
+
+### Phase 3b — B2B Customer "Cannot Search / Cannot Create" Checklist
+
+When an incident is about a store BA unable to find or create a B2B customer, run ALL of these checks in order:
+
+```sql
+-- 1. Does the customer exist by customercode?
+SELECT customerkey, customercode, customername, phonenumber, emailaddress,
+       isdeletedcustomer, blockedaccount, blockedaccountreason, orderblocked,
+       accountgroupcode, country, sourcecreatedtime, sourceupdatedtime
+FROM `oa-apmena-spacecds-ap-dv.space_cds_b2b_ds_replica_ase1_dv_cds_tgt.customer`
+WHERE customercode = '<CUSTOMERCODE>'
+LIMIT 5
+
+-- 2. If 0 rows: search by phone (strip non-digits for fuzzy match)
+SELECT customerkey, customercode, customername, phonenumber, emailaddress,
+       isdeletedcustomer, blockedaccount, country
+FROM `oa-apmena-spacecds-ap-dv.space_cds_b2b_ds_replica_ase1_dv_cds_tgt.customer`
+WHERE REGEXP_REPLACE(phonenumber, r'[^0-9]', '') LIKE '%<DIGITS_ONLY_PHONE>%'
+LIMIT 10
+
+-- 3. If customer found: check CFS profile (needed for login/search in the app)
+SELECT cfsmasterkey, email, firstname, lastname, professionalmobilenumber,
+       isemailvalid, ismobilevalid, createddatetime, lastupdateddatetime
+FROM `oa-apmena-spacecds-ap-dv.space_cds_b2b_ds_replica_ase1_dv_cds_tgt.cfs_master`
+WHERE professionalmobilenumber LIKE '%<DIGITS_ONLY_PHONE>%'
+   OR LOWER(email) = LOWER('<EMAIL_IF_KNOWN>')
+LIMIT 5
+
+-- 4. Check customer→CFS affiliation
+SELECT a.cfsmasterkey, a.customercode, a.rolecode, a.validfrom, a.validto
+FROM `oa-apmena-spacecds-ap-dv.space_cds_b2b_ds_replica_ase1_dv_cds_tgt.cfs_master_affiliation` a
+WHERE a.customercode = '<CUSTOMERCODE>'
+LIMIT 10
+
+-- 5. Check if the store (customercode prefix) itself is active
+SELECT customerkey, customercode, customername, isdeletedcustomer,
+       blockedaccount, orderblocked, country
+FROM `oa-apmena-spacecds-ap-dv.space_cds_b2b_ds_replica_ase1_dv_cds_tgt.customer`
+WHERE customercode LIKE '<STORE_PREFIX>%'
+LIMIT 10
+```
+
+Interpret results:
+
+| Finding | Root Cause |
+|---------|-----------|
+| Customer exists, `isdeletedcustomer = true` | Account was deleted — needs to be restored or recreated in SAP/MARS |
+| Customer exists, `blockedaccount = true` | Account blocked — check `blockedaccountreason`; escalate to credit/sales team |
+| Customer exists, `orderblocked != null/empty` | Order block active — check block code, escalate to sales |
+| Customer exists, phone number doesn't match | Phone stored in CDS differs from what the BA is searching; BA may need to search by email or customercode instead |
+| Customer exists, no CFS profile | CFS profile not created or not linked — contact lookup will fail; MARS needs to push CFS record |
+| Customer exists, CFS but no affiliation | CFS-customer link missing — BA cannot be associated with the store |
+| 0 rows by customercode | Customer not yet in CDS — check if SAP→MARS→CDS pipeline has processed the record; request MARS team to verify ingestion |
+| 0 rows by phone too | Customer truly absent from CDS; confirm customercode is correct; ask MARS to resend |
 
 ### Phase 4 — CONCLUDE
 1. Write the RCA report using the template below.
@@ -66,6 +128,12 @@ Always add a `LIMIT` clause. Use backtick table refs:
 
 > **Never ask the user for verification before calling `send_rca_email`.**
 > The email IS the notification. The user will respond when ready.
+
+> **A failed or empty BQ query is NOT "cannot find root cause."** It is data that must be interpreted:
+> - 0 rows by customercode → customer missing from CDS (ingestion issue)
+> - Auth error → re-check project qualifier in SQL; try `oa-apmena-spacecds-ap-dv` as billing project
+> - Syntax error → check column names with `get_schema` before retrying
+> Always explain what the query result means in context of the incident.
 
 ## Report Template
 
@@ -92,6 +160,7 @@ Always add a `LIMIT` clause. Use backtick table refs:
 
 ## Common SPACE CDS Root Causes
 
+### B2C
 | # | Root Cause | Signal |
 |---|-----------|--------|
 | 1 | Missing MARSID | User profile has no MARS ID — orders can't be matched |
@@ -100,6 +169,17 @@ Always add a `LIMIT` clause. Use backtick table refs:
 | 4 | CBR mapping gap | Product absent from mars_V21_mapping_product table |
 | 5 | Profile merge | Duplicate profiles with different loyalty IDs |
 | 6 | Region config | Country/brand code mismatch in routing tables |
+
+### B2B (Customer Search / Create Issues)
+| # | Root Cause | Signal | Resolution |
+|---|-----------|--------|-----------|
+| 7 | Customer not in CDS | 0 rows by customercode | SAP→MARS pipeline hasn't ingested; ask MARS to resend |
+| 8 | Customer deleted | `isdeletedcustomer = true` | Needs recreate in SAP and re-push via MARS |
+| 9 | Account blocked | `blockedaccount = true` | Check `blockedaccountreason`; credit/sales team unblocks |
+| 10 | Order blocked | `orderblocked` not null | Sales order block — escalate to sales team |
+| 11 | Phone mismatch | Phone in CDS ≠ BA is searching | BA should search by email or customercode instead |
+| 12 | Missing CFS profile | Customer row exists, no `cfs_master` row | MARS needs to push the CFS professional profile |
+| 13 | CFS not linked to customer | `cfs_master_affiliation` has no row | Affiliation record missing; MARS/SAP needs to create the link |
 
 ## BigQuery Datasets
 
