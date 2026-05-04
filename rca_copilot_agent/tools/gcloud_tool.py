@@ -14,6 +14,7 @@ stdio protocol stream.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
@@ -87,6 +88,26 @@ def run_adc_login() -> bool:
         return False
 
 
+def set_quota_project(project_id: str | None = None) -> None:
+    """
+    Run `gcloud auth application-default set-quota-project <project_id>`.
+
+    Uses the BQ_PROJECT env var if project_id is not provided, falling back
+    to oa-apmena-spacecds-ap-pd.
+    """
+    if project_id is None:
+        project_id = os.environ.get("BQ_PROJECT", "oa-apmena-spacecds-ap-pd")
+    try:
+        subprocess.run(
+            ["gcloud", "auth", "application-default", "set-quota-project", project_id],
+            stdout=sys.stderr,
+            stderr=sys.stderr,
+            timeout=30,
+        )
+    except Exception as exc:
+        print(f"[GCLOUD] Could not set quota project: {exc}", file=sys.stderr)
+
+
 def ensure_gcloud_auth(required_domain: str = "loreal.com") -> None:
     """
     Top-level entry point called from mcp_server.main() after ensure_credentials().
@@ -105,7 +126,8 @@ def ensure_gcloud_auth(required_domain: str = "loreal.com") -> None:
             "[GCLOUD] No active gcloud account detected — launching gcloud login...",
             file=sys.stderr,
         )
-        run_adc_login()
+        if run_adc_login():
+            set_quota_project()
         return
 
     if not account.lower().endswith(f"@{required_domain.lower()}"):
@@ -114,7 +136,8 @@ def ensure_gcloud_auth(required_domain: str = "loreal.com") -> None:
             "launching gcloud login...",
             file=sys.stderr,
         )
-        run_adc_login()
+        if run_adc_login():
+            set_quota_project()
         return
 
     if not is_adc_configured():
@@ -123,7 +146,8 @@ def ensure_gcloud_auth(required_domain: str = "loreal.com") -> None:
             "launching gcloud login...",
             file=sys.stderr,
         )
-        run_adc_login()
+        if run_adc_login():
+            set_quota_project()
         return
 
     print(f"[GCLOUD] gcloud ADC valid ({required_domain} account active).", file=sys.stderr)
