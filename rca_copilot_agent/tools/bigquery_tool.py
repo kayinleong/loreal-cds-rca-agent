@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import re
 import logging
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -435,13 +436,88 @@ def is_enabled() -> bool:
     return bool(_executors)
 
 
+def _is_permission_error(msg: str) -> bool:
+    """True when the error is an IAM/auth denial (not a SQL or quota error)."""
+    lower = msg.lower()
+    return "access denied" in lower or "403" in lower or "permission" in lower
+
+
+def _bq_cli_available() -> bool:
+    """True when the bq CLI binary is on PATH."""
+    try:
+        r = subprocess.run(["bq", "version"], capture_output=True, timeout=5)
+        return r.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def _bq_cli_execute(sql: str, project: str, max_rows: int = 100) -> QueryResult:
+    """
+    Execute a pre-validated SELECT query via the bq CLI subprocess.
+    Uses gcloud auth login credentials, which often differ from ADC.
+    """
+    try:
+        proc = subprocess.run(
+            [
+                "bq",
+                f"--project_id={project}",
+                "--quiet",
+                "query",
+                "--nouse_legacy_sql",
+                "--format=json",
+                f"--max_rows={max_rows}",
+                sql,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        stderr = proc.stderr.strip()
+        stdout = proc.stdout.strip()
+
+        if proc.returncode != 0:
+            return QueryResult(success=False, error=stderr or stdout, sql=sql)
+
+        if not stdout or stdout in ("[]", ""):
+            return QueryResult(success=True, data=[], row_count=0, columns=[], sql=sql)
+
+        rows = json.loads(stdout)
+        if not isinstance(rows, list):
+            return QueryResult(success=False, error=f"Unexpected bq output: {stdout[:200]}", sql=sql)
+
+        columns = list(rows[0].keys()) if rows else []
+        return QueryResult(
+            success=True,
+            data=rows,
+            row_count=len(rows),
+            columns=columns,
+            sql=sql,
+        )
+
+    except subprocess.TimeoutExpired:
+        return QueryResult(success=False, error="bq CLI query timed out (60s)", sql=sql)
+    except json.JSONDecodeError as exc:
+        return QueryResult(success=False, error=f"bq CLI returned non-JSON output: {exc}", sql=sql)
+    except Exception as exc:
+        return QueryResult(success=False, error=f"bq CLI error: {exc}", sql=sql)
+
+
 def query_bigquery(sql: str, rationale: str = "") -> str:
-    """Execute a read-only BigQuery query. Returns LLM-friendly result string."""
+    """
+    Execute a read-only BigQuery query. Returns LLM-friendly result string.
+    Tries the Python client (ADC) first; falls back to bq CLI when the Python
+    client hits a permission error (common when ADC ≠ gcloud auth credentials).
+    """
     if not _executors:
         raise RuntimeError(_BQ_UNAVAILABLE)
     executor = _pick_executor(sql)
     logger.info(f"[BQ] billing_project={executor.project} | {rationale}\n  SQL: {sql[:200]}")
     result = executor.execute(sql)
+
+    if not result.success and _is_permission_error(result.error or ""):
+        logger.info("[BQ] Python client permission denied — retrying with bq CLI")
+        result = _bq_cli_execute(sql, executor.project)
+
     return result.to_llm_context()
 
 

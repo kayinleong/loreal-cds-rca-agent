@@ -3,7 +3,7 @@
 - session: claude-code
 - branch: feature/rca-agent
 - started: 2026-05-04
-- status: done
+- status: done (amended)
 - summary: Fix BQ multi-project billing (bigquery.jobs.create denied for DV project), improve rca_copilot_agent AGENTS.md with deeper B2B investigation guidance
 
 ## What will change
@@ -31,3 +31,6 @@
 - Syntax: `ast.parse()` on bigquery_tool.py passes
 - Regression: `is_enabled()`, `_get_executor()`, `query_bigquery()`, `get_schema_from_file()` signatures and behaviour unchanged; mcp_server.py calls `is_enabled()` and `query_bigquery()` which both use `_executors` dict — no caller changes required
 - No secrets introduced; no `.env` changes; no schema.json changes
+
+### Amendment — bq CLI fallback
+Added `_bq_cli_execute()` / `_is_permission_error()` / `_bq_cli_available()` so that when the Python client (ADC) is denied, `query_bigquery()` retries via subprocess `bq query`. Tested end-to-end: `bq` CLI available on PATH, query for VN0210468003452 ran successfully and returned 0 rows (the root cause for INC10425353 — customer not in CDS).
