@@ -436,12 +436,6 @@ def is_enabled() -> bool:
     return bool(_executors)
 
 
-def _is_permission_error(msg: str) -> bool:
-    """True when the error is an IAM/auth denial (not a SQL or quota error)."""
-    lower = msg.lower()
-    return "access denied" in lower or "403" in lower or "permission" in lower
-
-
 def _bq_cli_available() -> bool:
     """True when the bq CLI binary is on PATH."""
     try:
@@ -503,21 +497,15 @@ def _bq_cli_execute(sql: str, project: str, max_rows: int = 100) -> QueryResult:
 
 
 def query_bigquery(sql: str, rationale: str = "") -> str:
-    """
-    Execute a read-only BigQuery query. Returns LLM-friendly result string.
-    Tries the Python client (ADC) first; falls back to bq CLI when the Python
-    client hits a permission error (common when ADC ≠ gcloud auth credentials).
-    """
+    """Execute a read-only BigQuery query via bq CLI. Returns LLM-friendly result string."""
     if not _executors:
         raise RuntimeError(_BQ_UNAVAILABLE)
     executor = _pick_executor(sql)
+    is_valid, error = executor.validate_query(sql)
+    if not is_valid:
+        return QueryResult(success=False, error=error, sql=sql).to_llm_context()
     logger.info(f"[BQ] billing_project={executor.project} | {rationale}\n  SQL: {sql[:200]}")
-    result = executor.execute(sql)
-
-    if not result.success and _is_permission_error(result.error or ""):
-        logger.info("[BQ] Python client permission denied — retrying with bq CLI")
-        result = _bq_cli_execute(sql, executor.project)
-
+    result = _bq_cli_execute(sql, executor.project, max_rows=executor.max_rows)
     return result.to_llm_context()
 
 
