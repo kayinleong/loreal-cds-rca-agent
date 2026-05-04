@@ -10,7 +10,9 @@
         "BQ_DATASET": "space_cds_b2c_ds_replica_ae2_pd_public",
         "BQ_MAX_BYTES": "500000000",
         "BQ_TIMEOUT": "30",
-        "BQ_MAX_ROWS": "100"
+        "BQ_MAX_ROWS": "100",
+        "REPORTS_DIR": "${workspaceFolder}/my_reports",
+        "ATTACHMENTS_DIR": "${workspaceFolder}/attachments"
       }
     }
   }

@@ -29,8 +29,8 @@ ENVIRONMENT (via .env or shell):
     COOKIE          Full Cookie header from an active ServiceNow session
     X_USERTOKEN     X-UserToken CSRF token from the same session
     SNOW_INSTANCE   ServiceNow base URL (default: https://loreal.service-now.com)
-    REPORTS_DIR     Default directory for downloaded JSON (default: ./my_reports)
-    ATTACHMENTS_DIR Directory for downloaded attachments (default: ./attachments)
+    REPORTS_DIR     Directory for downloaded JSON (default: <repo_root>/my_reports via .vscode/mcp.json)
+    ATTACHMENTS_DIR Directory for downloaded attachments (default: <repo_root>/attachments via .vscode/mcp.json)
 
     BigQuery: uses gcloud Application Default Credentials (ADC).
     No BQ_* env vars needed. Ensure schema.json exists in the repo root.
