@@ -28,6 +28,11 @@ mcp-servers:
       SNOW_INSTANCE: https://loreal.service-now.com
       REPORTS_DIR: ./my_reports
       ATTACHMENTS_DIR: ./attachments
+      BQ_PROJECT: oa-apmena-spacecds-ap-pd
+      BQ_DATASET: space_cds_b2c_ds_replica_ae2_pd_public
+      BQ_MAX_BYTES: "500000000"
+      BQ_TIMEOUT: "30"
+      BQ_MAX_ROWS: "100"
       SMTP_HOST: ""
       SMTP_PORT: "587"
       SMTP_USE_TLS: "true"
@@ -156,40 +161,40 @@ Carry the detected intent through all subsequent steps — do not ask the user t
 
 **Dataset selection:**
 
-| Incident type | Dataset to use | Project |
-|---------------|---------------|---------|
-| B2C consumer (purchase, loyalty, account, GDPR) | `space_cds_b2c_ds_replica_ae2_pd_public` | `oa-apmena-spacecds-ap-pd` |
-| B2B Middle East (salon/distributor, SAP order, invoice) | `space_cds_b2b_ds_replica_ae2_dv_cds_tgt` | `oa-apmena-spacecds-ap-dv` |
+| Incident type                                              | Dataset to use                             | Project                    |
+| ---------------------------------------------------------- | ------------------------------------------ | -------------------------- |
+| B2C consumer (purchase, loyalty, account, GDPR)            | `space_cds_b2c_ds_replica_ae2_pd_public`   | `oa-apmena-spacecds-ap-pd` |
+| B2B Middle East (salon/distributor, SAP order, invoice)    | `space_cds_b2b_ds_replica_ae2_dv_cds_tgt`  | `oa-apmena-spacecds-ap-dv` |
 | B2B Southeast Asia (salon/distributor, SAP order, invoice) | `space_cds_b2b_ds_replica_ase1_dv_cds_tgt` | `oa-apmena-spacecds-ap-dv` |
 
 **Key identifier → table mappings (B2C):**
 
-| Identifier found in incident | Table to query | Column to filter on |
-|------------------------------|---------------|---------------------|
-| Order number | `purchase` | `sourceordernumber` |
-| Order number (items/EAN) | `purchase_item` | `sourceordernumber` |
-| Consumer email | `consumer_pii` | `email` |
-| Consumer LUCID / MARS ID | `consumer_pii` | `lucid` |
-| External consumer ID | `external_system_ids` | `sourceconsumerid` |
-| EAN code / barcode | `product` | `ean` (also `purchase_item.eancode`) |
-| Delivery / shipping issue | `shipment` | `sourceordernumber` |
-| Loyalty points issue | `consumer_behaviour` | `lucid` |
-| Marketing opt-in issue | `consumer_marketing_preferences` | `lucid` |
-| Duplicate account | `consumer_merge` | `lucid` or `oldlucid` |
-| Care case number | `care_case` | `lucid` or `caseid` |
+| Identifier found in incident | Table to query                   | Column to filter on                  |
+| ---------------------------- | -------------------------------- | ------------------------------------ |
+| Order number                 | `purchase`                       | `sourceordernumber`                  |
+| Order number (items/EAN)     | `purchase_item`                  | `sourceordernumber`                  |
+| Consumer email               | `consumer_pii`                   | `email`                              |
+| Consumer LUCID / MARS ID     | `consumer_pii`                   | `lucid`                              |
+| External consumer ID         | `external_system_ids`            | `sourceconsumerid`                   |
+| EAN code / barcode           | `product`                        | `ean` (also `purchase_item.eancode`) |
+| Delivery / shipping issue    | `shipment`                       | `sourceordernumber`                  |
+| Loyalty points issue         | `consumer_behaviour`             | `lucid`                              |
+| Marketing opt-in issue       | `consumer_marketing_preferences` | `lucid`                              |
+| Duplicate account            | `consumer_merge`                 | `lucid` or `oldlucid`                |
+| Care case number             | `care_case`                      | `lucid` or `caseid`                  |
 
 **Key identifier → table mappings (B2B):**
 
-| Identifier found in incident | Table to query | Column to filter on |
-|------------------------------|---------------|---------------------|
-| SAP order number | `sales_order` | `saporderid` |
-| SAP order line / EAN | `sales_order_line` | `saporderid` or `ean` |
-| SAP invoice number | `invoice` | `sapinvoiceid` |
-| SAP delivery number | `delivery` | `sapdeliveryid` |
-| B2B customer / salon code | `customer` | `customercode` |
-| B2B contact email | `cfs_master` | `email` |
-| CFS profile key | `cfs_master` | `cfsmasterkey` |
-| B2B consent / opt-in | `cfs_master_consents` | `cfsmasterkey` |
+| Identifier found in incident | Table to query        | Column to filter on   |
+| ---------------------------- | --------------------- | --------------------- |
+| SAP order number             | `sales_order`         | `saporderid`          |
+| SAP order line / EAN         | `sales_order_line`    | `saporderid` or `ean` |
+| SAP invoice number           | `invoice`             | `sapinvoiceid`        |
+| SAP delivery number          | `delivery`            | `sapdeliveryid`       |
+| B2B customer / salon code    | `customer`            | `customercode`        |
+| B2B contact email            | `cfs_master`          | `email`               |
+| CFS profile key              | `cfs_master`          | `cfsmasterkey`        |
+| B2B consent / opt-in         | `cfs_master_consents` | `cfsmasterkey`        |
 
 ---
 
