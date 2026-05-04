@@ -26,6 +26,23 @@ Validate root causes with live BigQuery queries and produce structured RCA repor
 | `list_bq_tables` | List all BQ tables with row counts and sizes |
 | `save_rca_report` | **MANDATORY** — save every completed RCA report to disk |
 | `send_rca_email` | **MANDATORY** — notify the human when the session is done |
+| `auto_credential_refresh` | Automatic startup tool — not callable; runs at MCP server start to detect and renew stale ServiceNow session cookies via browser SSO |
+
+## Environment Setup
+
+### ServiceNow Credentials (auto-refreshed)
+
+At startup the MCP server checks whether `COOKIE` and `X_USERTOKEN` in `.env` are valid.
+If missing or expired, a Chromium browser window opens automatically for SSO login.
+Credentials are written back to `.env` after login — no manual DevTools copy-paste needed.
+
+**First-time setup (one-time only):**
+```bash
+pip install playwright
+playwright install chromium
+```
+
+If playwright is not installed, the server falls back to the manual instructions in `.env.example`.
 
 ## Investigation Workflow
 

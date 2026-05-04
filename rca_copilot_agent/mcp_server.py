@@ -862,6 +862,14 @@ def main() -> None:
     # Pre-load incidents if they already exist on disk
     _auto_load_store(reports_dir)
 
+    # Check / refresh ServiceNow credentials before starting the MCP event loop.
+    # Runs synchronously — no asyncio loop is active here yet.
+    try:
+        from tools.auth_tool import ensure_credentials
+        ensure_credentials(instance_url=cfg.instance_url)
+    except Exception as auth_err:
+        logger.warning(f"[AUTH] Credential check failed: {type(auth_err).__name__}: {auth_err}")
+
     # Run MCP server or fallback
     try:
         import mcp  # noqa: F401
