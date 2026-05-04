@@ -1,22 +1,18 @@
 """
-Configuration — BigQuery + ServiceNow.
+Configuration — ServiceNow + SMTP.
 No LLM configuration; GitHub Copilot provides the reasoning.
 
 Required environment variables (or .env keys):
     COOKIE          Full Cookie header from an active ServiceNow browser session
     X_USERTOKEN     X-UserToken CSRF token from the same session
 
-BigQuery variables (optional — BQ tools disabled if BQ_PROJECT is absent):
-    BQ_PROJECT      GCP project ID
-    BQ_DATASET      BigQuery dataset name
-    BQ_MAX_BYTES    Hard scan limit in bytes (default: 500000000)
-    BQ_TIMEOUT      Query timeout in seconds (default: 30)
-    BQ_MAX_ROWS     Max rows returned per query (default: 100)
-
-Other optional:
+Optional:
     SNOW_INSTANCE   ServiceNow base URL (default: https://loreal.service-now.com)
     REPORTS_DIR     Local directory for downloaded incident JSON (default: ./my_reports)
     ATTACHMENTS_DIR Local directory for downloaded attachments (default: ./attachments)
+
+BigQuery: configured via schema.json in the repo root + gcloud ADC.
+No BQ_* env vars required. Run: gcloud auth application-default login
 """
 
 from __future__ import annotations
@@ -61,19 +57,6 @@ class ServiceNowConfig:
     attachments_dir: str
 
 
-@dataclass
-class BigQueryConfig:
-    project: str
-    dataset: str
-    max_bytes: int
-    timeout: float
-    max_rows: int
-
-    @property
-    def enabled(self) -> bool:
-        return bool(self.project and self.dataset)
-
-
 def load_config(env_file: str = ".env") -> ServiceNowConfig:
     """
     Load ServiceNow config from environment variables, falling back to a .env file.
@@ -97,20 +80,48 @@ def load_config(env_file: str = ".env") -> ServiceNowConfig:
     )
 
 
-def load_bq_config(env_file: str = ".env") -> BigQueryConfig:
+@dataclass
+class SmtpConfig:
+    host: str
+    port: int
+    user: str
+    password: str
+    from_addr: str
+    to_addrs: list
+    use_tls: bool
+    verify_ssl: bool
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.host and self.from_addr and self.to_addrs)
+
+
+def load_smtp_config(env_file: str = ".env") -> SmtpConfig:
     """
-    Load BigQuery config from environment variables, falling back to a .env file.
-    Returns a BigQueryConfig with project="" if BQ_PROJECT is not set (disabled state).
+    Load SMTP config from environment variables, falling back to a .env file.
+    Returns a SmtpConfig with host="" if SMTP_HOST is not set (disabled state).
     """
     env_data = _find_env_data(env_file)
 
     def get(key: str, default: str = "") -> str:
         return os.environ.get(key) or env_data.get(key, default)
 
-    return BigQueryConfig(
-        project=get("BQ_PROJECT"),
-        dataset=get("BQ_DATASET"),
-        max_bytes=int(get("BQ_MAX_BYTES", "500000000")),
-        timeout=float(get("BQ_TIMEOUT", "30")),
-        max_rows=int(get("BQ_MAX_ROWS", "100")),
+    raw_to = get("SMTP_TO", "")
+    to_addrs = [a.strip() for a in raw_to.split(",") if a.strip()]
+
+    use_tls_raw = get("SMTP_USE_TLS", "true").lower()
+    use_tls = use_tls_raw not in ("false", "0", "no")
+
+    verify_ssl_raw = get("SMTP_VERIFY_SSL", "true").lower()
+    verify_ssl = verify_ssl_raw not in ("false", "0", "no")
+
+    return SmtpConfig(
+        host=get("SMTP_HOST"),
+        port=int(get("SMTP_PORT", "587")),
+        user=get("SMTP_USER"),
+        password=get("SMTP_PASSWORD"),
+        from_addr=get("SMTP_FROM"),
+        to_addrs=to_addrs,
+        use_tls=use_tls,
+        verify_ssl=verify_ssl,
     )

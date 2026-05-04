@@ -14,10 +14,10 @@ ServiceNow tools:
   post_comment         — Post a comment (or work note) to an incident
   extract_identifiers  — Extract order IDs, emails, EAN codes from incident text
 
-BigQuery tools (enabled when BQ_PROJECT is set):
+BigQuery tools (via gcloud ADC + schema.json — no env vars required):
   query_bigquery       — Execute a read-only SELECT query
-  get_schema           — Get table schema or list all tables in the dataset
-  list_bq_tables       — List all tables with row counts and sizes
+  get_schema           — Get table schema from schema.json (instant, no BQ cost)
+  list_bq_tables       — List all tables with their RCA purpose from schema.json
 
 USAGE:
     python mcp_server.py
@@ -31,11 +31,10 @@ ENVIRONMENT (via .env or shell):
     SNOW_INSTANCE   ServiceNow base URL (default: https://loreal.service-now.com)
     REPORTS_DIR     Default directory for downloaded JSON (default: ./my_reports)
     ATTACHMENTS_DIR Directory for downloaded attachments (default: ./attachments)
-    BQ_PROJECT      GCP project ID (required for BigQuery tools)
-    BQ_DATASET      BigQuery dataset name
-    BQ_MAX_BYTES    Hard scan ceiling in bytes (default: 500000000)
-    BQ_TIMEOUT      Query timeout in seconds (default: 30)
-    BQ_MAX_ROWS     Max rows returned per query (default: 100)
+
+    BigQuery: uses gcloud Application Default Credentials (ADC).
+    No BQ_* env vars needed. Ensure schema.json exists in the repo root.
+    Run: gcloud auth application-default login
 """
 
 from __future__ import annotations
@@ -289,7 +288,8 @@ def create_mcp_server(reports_dir: str):
                     "Use to look up order data, pipeline events, or any structured data that may explain "
                     "a ServiceNow incident. Blocked from INSERT/UPDATE/DELETE/DROP. "
                     "Always add a LIMIT clause. Use backticks for table refs: "
-                    f"`{'{BQ_PROJECT}'}.{'{BQ_DATASET}'}.table_name`."
+                    "`oa-apmena-spacecds-ap-pd.space_cds_b2c_ds_replica_ae2_pd_public.table_name`. "
+                    "Call get_schema first to confirm column names and get ready-to-use query patterns."
                 ),
                 inputSchema={
                     "type": "object",
@@ -309,9 +309,10 @@ def create_mcp_server(reports_dir: str):
             Tool(
                 name="get_schema",
                 description=(
-                    "Get the column schema of a specific BigQuery table, or list all tables "
-                    "in the dataset when no table name is given. Use before writing a query to "
-                    "confirm column names and types."
+                    "Get schema info for a BigQuery table from local schema.json, or list all tables "
+                    "when no table name is given. Returns column names, types, relationships, and "
+                    "ready-to-use query patterns. Faster than a live BQ call — always use this before "
+                    "writing a query to confirm column names."
                 ),
                 inputSchema={
                     "type": "object",
@@ -330,8 +331,9 @@ def create_mcp_server(reports_dir: str):
             Tool(
                 name="list_bq_tables",
                 description=(
-                    "List all tables in the SPACE CDS BigQuery dataset with row counts and sizes. "
-                    "Use to discover what data is available before writing a query."
+                    "List all tables in the SPACE CDS BigQuery dataset with their RCA purpose. "
+                    "Reads from local schema.json — instant, no BQ cost. "
+                    "Use to discover which table to query before calling get_schema."
                 ),
                 inputSchema={
                     "type": "object",
@@ -362,6 +364,7 @@ def create_mcp_server(reports_dir: str):
                 description=(
                     "Save a completed RCA report to the local reports directory as a Markdown file. "
                     "ALWAYS call this after generating the RCA report for each incident. "
+                    "The saved path is tracked for the current session so send_rca_email can attach it. "
                     "Returns the path where the report was saved."
                 ),
                 inputSchema={
@@ -377,6 +380,39 @@ def create_mcp_server(reports_dir: str):
                         },
                     },
                     "required": ["incident_number", "report_text"],
+                },
+            ),
+            Tool(
+                name="send_rca_email",
+                description=(
+                    "Send an HTML email to notify the human reviewer that RCA analysis is complete. "
+                    "Call this AFTER all save_rca_report calls for the session are done, "
+                    "and BEFORE asking the human for verification. "
+                    "Automatically attaches all RCA report files saved in this session (if any exist on disk). "
+                    "Requires SMTP settings in .env (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, "
+                    "SMTP_FROM, SMTP_TO). Returns success/failure message."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "session_summary": {
+                            "type": "string",
+                            "description": (
+                                "Plain-text summary of what was analysed this session — "
+                                "e.g. which incidents were investigated and key findings. "
+                                "Rendered as the email body."
+                            ),
+                        },
+                        "subject": {
+                            "type": "string",
+                            "description": (
+                                "Email subject line. "
+                                "Default: 'RCA Analysis Complete — Please Review'"
+                            ),
+                            "default": "RCA Analysis Complete — Please Review",
+                        },
+                    },
+                    "required": ["session_summary"],
                 },
             ),
         ]
@@ -608,24 +644,12 @@ async def _dispatch(name: str, arguments: dict, reports_dir: str) -> str:
         )
 
     elif name == "get_schema":
-        from tools.bigquery_tool import is_enabled, lookup_schema, _BQ_UNAVAILABLE
-        if not is_enabled():
-            return _BQ_UNAVAILABLE
-        return lookup_schema(arguments.get("table_name", ""))
+        from tools.bigquery_tool import get_schema_from_file
+        return get_schema_from_file(arguments.get("table_name", ""))
 
     elif name == "list_bq_tables":
-        from tools.bigquery_tool import is_enabled, _get_executor, _dataset, _BQ_UNAVAILABLE
-        if not is_enabled():
-            return _BQ_UNAVAILABLE
-        executor = _get_executor()
-        tables = executor.list_tables(_dataset)
-        if not tables:
-            return "No tables found."
-        lines = [f"{'TABLE':<50} {'ROWS':>12} {'SIZE MB':>10}"]
-        lines.append("-" * 74)
-        for t in sorted(tables, key=lambda x: x["table_id"]):
-            lines.append(f"{t['full_name']:<50} {t['num_rows']:>12,} {t['size_mb']:>10.1f}")
-        return "\n".join(lines)
+        from tools.bigquery_tool import get_schema_from_file
+        return get_schema_from_file("")
 
     elif name == "download_attachments":
         _ensure_store_loaded(reports_dir)
@@ -683,7 +707,36 @@ async def _dispatch(name: str, arguments: dict, reports_dir: str) -> str:
             fh.write(f"_Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}_\n\n")
             fh.write(report_text)
 
+        from tools.email_tool import register_report
+        register_report(filepath)
+
         return f"✓ RCA report saved: {filepath}"
+
+    elif name == "send_rca_email":
+        from config import load_smtp_config
+        smtp = load_smtp_config()
+        if not smtp.enabled:
+            return (
+                "✗ SMTP not configured. Set SMTP_HOST, SMTP_FROM, and SMTP_TO in .env "
+                "to enable email notifications."
+            )
+
+        from tools.email_tool import send_rca_email as _send
+        subject = arguments.get("subject", "RCA Analysis Complete — Please Review")
+        session_summary = arguments["session_summary"]
+
+        return _send(
+            smtp_host=smtp.host,
+            smtp_port=smtp.port,
+            smtp_user=smtp.user,
+            smtp_password=smtp.password,
+            smtp_from=smtp.from_addr,
+            smtp_to=smtp.to_addrs,
+            use_tls=smtp.use_tls,
+            subject=subject,
+            session_summary=session_summary,
+            verify_ssl=smtp.verify_ssl,
+        )
 
     else:
         return f"Unknown tool: {name}"
@@ -789,26 +842,18 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr)
 
     # Resolve reports + attachments directories
-    from config import load_config, load_bq_config
+    from config import load_config
     cfg = load_config()
     reports_dir = args.reports_dir or cfg.reports_dir
     os.makedirs(reports_dir, exist_ok=True)
     os.makedirs(cfg.attachments_dir, exist_ok=True)
 
-    # Initialize BigQuery executor if credentials are present
-    bq_cfg = load_bq_config()
-    if bq_cfg.enabled:
-        from tools.bigquery_tool import init_executor as init_bq
-        init_bq(
-            project=bq_cfg.project,
-            dataset=bq_cfg.dataset,
-            max_bytes=bq_cfg.max_bytes,
-            timeout=bq_cfg.timeout,
-            max_rows=bq_cfg.max_rows,
-        )
-        logger.info(f"[BQ] Initialized: {bq_cfg.project}.{bq_cfg.dataset}")
-    else:
-        logger.info("[BQ] BQ_PROJECT not set — BigQuery tools disabled.")
+    # Initialize BigQuery from schema.json (gcloud ADC — no env vars needed)
+    try:
+        from tools.bigquery_tool import init_from_schema
+        init_from_schema()
+    except Exception as bq_err:
+        logger.warning(f"[BQ] Not available: {bq_err}")
 
     # Pre-load incidents if they already exist on disk
     _auto_load_store(reports_dir)

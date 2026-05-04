@@ -1,8 +1,11 @@
 """
-BigQuery Tool — Safe, Read-Only Executor
-=========================================
+BigQuery Tool — Safe, Read-Only Executor with schema.json-driven initialization
+================================================================================
+Auth:   gcloud Application Default Credentials (ADC) — no BQ env vars required.
+Schema: Reads schema.json from repo root for instant offline schema lookups.
+
 Multi-layer safety:
-  1. IAM: service account with roles/bigquery.dataViewer + jobUser only
+  1. IAM: account must have roles/bigquery.dataViewer + jobUser only
   2. Keyword filter: block INSERT/UPDATE/DELETE/DROP/etc.
   3. Dry-run validation: check syntax + estimate cost before execution
   4. maximum_bytes_billed: hard cost ceiling per query
@@ -11,13 +14,17 @@ Multi-layer safety:
 """
 
 from __future__ import annotations
-import re
 import json
+import re
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# schema.json lives in the repo root (3 levels up from rca_copilot_agent/tools/)
+_SCHEMA_JSON = Path(__file__).resolve().parent.parent.parent / "schema.json"
 
 # ── Blocklist ────────────────────────────────────────────────────────────────
 
@@ -64,7 +71,8 @@ class QueryResult:
 class SafeBigQueryExecutor:
     """
     Read-only BigQuery client with guardrails.
-    
+    Uses gcloud Application Default Credentials — no explicit credentials needed.
+
     Usage:
         executor = SafeBigQueryExecutor(project="my-project")
         result = executor.execute("SELECT COUNT(*) FROM `dataset.table`")
@@ -98,7 +106,6 @@ class SafeBigQueryExecutor:
         if not sql or not sql.strip():
             return False, "Empty query"
 
-        # Strip string literals and comments before keyword check
         cleaned = re.sub(r"'[^']*'", "", sql.upper())
         cleaned = re.sub(r'"[^"]*"', "", cleaned)
         cleaned = re.sub(r"--.*$", "", cleaned, flags=re.MULTILINE)
@@ -128,7 +135,6 @@ class SafeBigQueryExecutor:
 
     def execute(self, sql: str) -> QueryResult:
         """Validate → dry-run → execute with all safety bounds."""
-        # Step 1: Keyword validation
         is_valid, error = self.validate_query(sql)
         if not is_valid:
             return QueryResult(success=False, error=error, sql=sql)
@@ -136,7 +142,6 @@ class SafeBigQueryExecutor:
         try:
             from google.cloud import bigquery
 
-            # Step 2: Dry-run (syntax check + cost estimate)
             ok, dry_err, est_bytes = self.dry_run(sql)
             if not ok:
                 return QueryResult(
@@ -154,7 +159,6 @@ class SafeBigQueryExecutor:
                     sql=sql,
                 )
 
-            # Step 3: Execute with hard limits
             job_config = bigquery.QueryJobConfig(
                 maximum_bytes_billed=self.max_bytes,
             )
@@ -174,7 +178,7 @@ class SafeBigQueryExecutor:
         except Exception as e:
             return QueryResult(success=False, error=str(e), sql=sql)
 
-    # ── Schema Introspection ─────────────────
+    # ── Live Schema Introspection (fallback) ─────────────────────────────────
 
     def list_tables(self, dataset_id: str) -> list[dict]:
         """List all tables in a dataset with row counts."""
@@ -191,7 +195,7 @@ class SafeBigQueryExecutor:
         return tables
 
     def get_schema(self, dataset_id: str, table_id: str) -> str:
-        """Get table schema formatted for LLM context."""
+        """Get table schema formatted for LLM context (live BQ call)."""
         ref = f"{self.project}.{dataset_id}.{table_id}"
         table = self.client.get_table(ref)
         lines = [
@@ -209,51 +213,178 @@ class SafeBigQueryExecutor:
                     lines.append(f"    .{sub.name:<38} {sub.field_type:<12} {sub.mode}")
         return "\n".join(lines)
 
-    def build_schema_context(self, dataset_id: str, table_names: list[str] = None) -> str:
-        """
-        Build full schema context for the LLM system prompt.
-        If table_names is None, lists all tables.
-        """
-        parts = [
-            f"DATABASE: BigQuery `{self.project}.{dataset_id}`",
-            "DIALECT: GoogleSQL",
-            "  - Use backticks for table/dataset refs: `project.dataset.table`",
-            "  - Use SAFE_DIVIDE() for division",
-            "  - Use UNNEST() for arrays, STRUCT dot notation for nested fields",
-            "  - Use COUNTIF(), IFNULL(), COALESCE()",
-            "  - Date functions: DATE(), TIMESTAMP(), CURRENT_TIMESTAMP()",
-            "  - Always add LIMIT clause",
+
+# ── schema.json helpers ───────────────────────────────────────────────────────
+
+def _load_schema_json() -> dict:
+    """Load schema.json from repo root. Raises RuntimeError if missing."""
+    if not _SCHEMA_JSON.exists():
+        raise RuntimeError(
+            f"schema.json not found at {_SCHEMA_JSON}. "
+            "Ensure schema.json exists in the repo root."
+        )
+    return json.loads(_SCHEMA_JSON.read_text(encoding="utf-8"))
+
+
+def get_schema_from_file(table_name: str = "") -> str:
+    """
+    Return schema info from schema.json (instant, no BQ cost).
+    Empty table_name → list all tables (primary + additional datasets) with purpose.
+    Named table_name → search primary tables first, then additional_datasets.
+    """
+    schema = _load_schema_json()
+    tables = schema.get("tables", {})
+    project = schema.get("project", "")
+    dataset = schema.get("dataset", "")
+    additional_datasets: dict = schema.get("additional_datasets", {})
+
+    if not table_name:
+        lines = [
+            f"PRIMARY DATASET: `{project}.{dataset}`",
+            f"DIALECT: {schema.get('dialect', 'GoogleSQL')}",
+            f"AUTH: {schema.get('auth', 'gcloud ADC')}",
             "",
+            f"PRIMARY TABLES ({len(tables)}) — B2C consumer, purchase, loyalty, care_case:",
         ]
+        for name in sorted(tables.keys()):
+            t = tables[name]
+            purpose = t.get("purpose", t.get("description", ""))
+            lines.append(f"  `{project}.{dataset}.{name}`  →  {purpose}")
 
-        if table_names is None:
-            tables = self.list_tables(dataset_id)
-            parts.append(f"AVAILABLE TABLES ({len(tables)}):")
-            for t in sorted(tables, key=lambda x: x["table_id"]):
-                parts.append(f"  {t['full_name']}  ({t['num_rows']:,} rows, {t['size_mb']} MB)")
-            return "\n".join(parts)
+        if additional_datasets:
+            lines.append("")
+            lines.append("ADDITIONAL DATASETS (B2B + DV replicas):")
+            for ds_key, ds_info in additional_datasets.items():
+                ds_tables = ds_info.get("tables", {})
+                lines.append(f"  [{ds_key}]  {ds_info.get('description', '')}")
+                lines.append(f"    Note: {ds_info.get('note', '')}")
+                for tname in sorted(ds_tables.keys()):
+                    t = ds_tables[tname]
+                    lines.append(f"    `{ds_key}.{tname}`  →  {t.get('purpose', '')}")
 
-        for name in table_names:
-            parts.append(self.get_schema(dataset_id, name))
-            parts.append("")
-        return "\n".join(parts)
+        if schema.get("common_rca_patterns"):
+            lines.append("")
+            lines.append("COMMON RCA QUERY PATTERNS (fill in <PLACEHOLDER> values):")
+            for pattern_name, sql in schema["common_rca_patterns"].items():
+                lines.append(f"  [{pattern_name}]")
+                lines.append(f"    {sql}")
+        return "\n".join(lines)
+
+    # ── Look up a specific table ──────────────────────────────────────────────
+    # 1. Exact match in primary tables
+    matched_name = table_name if table_name in tables else next(
+        (k for k in tables if table_name.lower() in k.lower()), None
+    )
+    if matched_name:
+        return _format_primary_table(schema, project, dataset, matched_name)
+
+    # 2. Search additional_datasets
+    for ds_key, ds_info in additional_datasets.items():
+        ds_tables = ds_info.get("tables", {})
+        matched_ds = table_name if table_name in ds_tables else next(
+            (k for k in ds_tables if table_name.lower() in k.lower()), None
+        )
+        if matched_ds:
+            return _format_additional_table(ds_key, ds_info, matched_ds)
+
+    # 3. Not found
+    all_primary = ", ".join(sorted(tables.keys()))
+    all_extra = []
+    for ds_key, ds_info in additional_datasets.items():
+        for tname in ds_info.get("tables", {}):
+            all_extra.append(f"{ds_key}.{tname}")
+    hint = f"Primary tables: {all_primary}"
+    if all_extra:
+        hint += f"\n\nAdditional dataset tables: {', '.join(all_extra)}"
+    return f"Table '{table_name}' not found in schema.json.\n\n{hint}"
 
 
-# ── Module-level tool functions (used by MCP server + agent) ─────────────────
+def _format_primary_table(schema: dict, project: str, dataset: str, matched: str) -> str:
+    """Format a primary-dataset table entry for LLM output."""
+    t = schema["tables"][matched]
+    lines = [
+        f"TABLE: `{project}.{dataset}.{matched}`",
+        f"Purpose: {t.get('purpose', '')}",
+        f"Description: {t.get('description', '')}",
+    ]
+    if t.get("partitioned_by"):
+        lines.append(f"Partitioned by: {t['partitioned_by']}")
+    if t.get("clustered_by"):
+        lines.append(f"Clustered by: {', '.join(t['clustered_by'])}")
+    lines.append("")
+    lines.append("COLUMNS:")
+    for col in t.get("columns", []):
+        desc = f"  -- {col['description']}" if col.get("description") else ""
+        lines.append(f"  {col['name']:<45} {col['type']:<12}{desc}")
+    if t.get("relationships"):
+        lines.append("")
+        lines.append("RELATIONSHIPS:")
+        for rel in t["relationships"]:
+            lines.append(f"  {rel}")
+    patterns = schema.get("common_rca_patterns", {})
+    relevant = {k: v for k, v in patterns.items() if matched.replace("_", "") in v.replace("_", "").lower()}
+    if relevant:
+        lines.append("")
+        lines.append("COMMON QUERY PATTERNS:")
+        for pname, sql in relevant.items():
+            lines.append(f"  [{pname}]: {sql}")
+    return "\n".join(lines)
+
+
+def _format_additional_table(ds_key: str, ds_info: dict, matched: str) -> str:
+    """Format an additional-dataset table entry for LLM output."""
+    t = ds_info["tables"][matched]
+    lines = [
+        f"TABLE: `{ds_key}.{matched}`",
+        f"Dataset: {ds_info.get('description', '')}",
+        f"Note: {ds_info.get('note', '')}",
+        f"Purpose: {t.get('purpose', '')}",
+        "",
+        "COLUMNS:",
+    ]
+    for col in t.get("columns", []):
+        desc = f"  -- {col['description']}" if col.get("description") else ""
+        lines.append(f"  {col['name']:<45} {col['type']:<12}{desc}")
+    if t.get("relationships"):
+        lines.append("")
+        lines.append("RELATIONSHIPS:")
+        for rel in t["relationships"]:
+            lines.append(f"  {rel}")
+    if t.get("common_queries"):
+        lines.append("")
+        lines.append("EXAMPLE QUERIES:")
+        for q in t["common_queries"]:
+            lines.append(f"  {q}")
+    return "\n".join(lines)
+
+
+# ── Module-level tool functions (used by MCP server) ─────────────────────────
 
 _executor: Optional[SafeBigQueryExecutor] = None
 _dataset: Optional[str] = None
 
 
-def init_executor(project: str, dataset: str, **kwargs):
-    """Initialize the global executor. Called once during agent/server setup."""
+def init_from_schema() -> None:
+    """
+    Initialize BQ executor from schema.json. No env vars required.
+    Uses gcloud Application Default Credentials for authentication.
+    """
     global _executor, _dataset
-    _dataset = dataset
-    _executor = SafeBigQueryExecutor(project=project, **kwargs)
+    schema = _load_schema_json()
+    project = schema["project"]
+    _dataset = schema["dataset"]
+    _executor = SafeBigQueryExecutor(
+        project=project,
+        max_bytes=500_000_000,
+        timeout=30.0,
+        max_rows=100,
+    )
+    logger.info(f"[BQ] Initialized from schema.json: {project}.{_dataset}")
 
 
 _BQ_UNAVAILABLE = (
-    "BigQuery is not configured. Set BQ_PROJECT and BQ_DATASET in .env to enable BQ tools."
+    "BigQuery is not available. Ensure schema.json exists in the repo root and "
+    "gcloud ADC is configured (run: gcloud auth application-default login)."
 )
 
 
@@ -277,21 +408,5 @@ def query_bigquery(sql: str, rationale: str = "") -> str:
 
 
 def lookup_schema(table_pattern: str = "") -> str:
-    """Look up BigQuery table schemas. Empty pattern lists all tables."""
-    executor = _get_executor()
-    dataset = _dataset
-
-    if not table_pattern:
-        return executor.build_schema_context(dataset)
-    else:
-        try:
-            return executor.get_schema(dataset, table_pattern)
-        except Exception:
-            tables = executor.list_tables(dataset)
-            matches = [t for t in tables if table_pattern.lower() in t["table_id"].lower()]
-            if matches:
-                lines = [f"Tables matching '{table_pattern}':"]
-                for t in matches:
-                    lines.append(f"  {t['full_name']}  ({t['num_rows']:,} rows)")
-                return "\n".join(lines)
-            return f"No tables matching '{table_pattern}' found in {dataset}"
+    """Look up BigQuery table schemas from schema.json (fast) or live BQ (fallback)."""
+    return get_schema_from_file(table_pattern)
