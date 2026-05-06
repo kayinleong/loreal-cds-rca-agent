@@ -15,14 +15,40 @@ Multi-layer safety:
 
 from __future__ import annotations
 import json
+import os
 import re
 import logging
+import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# ── bq CLI path resolution ────────────────────────────────────────────────────
+# VS Code and other GUI launchers strip shell PATH customisations, so
+# shutil.which("bq") often fails even when the SDK is installed. We supplement
+# with well-known SDK locations — bq lives alongside gcloud in the same bin/.
+
+_BQ_FALLBACK_PATHS = [
+    os.path.expanduser("~/Documents/google-cloud-sdk/bin/bq"),
+    os.path.expanduser("~/google-cloud-sdk/bin/bq"),
+    "/usr/local/bin/bq",
+    "/opt/homebrew/bin/bq",
+    "/snap/bin/bq",
+]
+
+
+def _find_bq() -> str:
+    path = shutil.which("bq")
+    if path:
+        return path
+    for candidate in _BQ_FALLBACK_PATHS:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return "bq"  # let subprocess raise FileNotFoundError with a clear message
+
 
 # schema.json lives in the repo root (3 levels up from rca_copilot_agent/tools/)
 _SCHEMA_JSON = Path(__file__).resolve().parent.parent.parent / "schema.json"
@@ -437,9 +463,9 @@ def is_enabled() -> bool:
 
 
 def _bq_cli_available() -> bool:
-    """True when the bq CLI binary is on PATH."""
+    """True when the bq CLI binary is reachable (checks PATH and fallback locations)."""
     try:
-        r = subprocess.run(["bq", "version"], capture_output=True, timeout=5)
+        r = subprocess.run([_find_bq(), "version"], capture_output=True, timeout=5)
         return r.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
@@ -453,7 +479,7 @@ def _bq_cli_execute(sql: str, project: str, max_rows: int = 100) -> QueryResult:
     try:
         proc = subprocess.run(
             [
-                "bq",
+                _find_bq(),
                 f"--project_id={project}",
                 "--quiet",
                 "query",
