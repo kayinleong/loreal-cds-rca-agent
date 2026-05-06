@@ -72,7 +72,7 @@ For each hypothesis run one or more targeted queries:
 | Null audit | `SELECT COUNTIF(field IS NULL) FROM t WHERE …` |
 | Date window | `SELECT MIN(ts), MAX(ts) FROM t WHERE …` |
 | Comparison | `SELECT a.f, b.f FROM a JOIN b ON … WHERE a.f != b.f LIMIT 10` |
-| Phone lookup | `SELECT customercode, customername, phonenumber FROM t WHERE REGEXP_REPLACE(phonenumber, r'\D', '') LIKE '%…%' LIMIT 5` |
+| Phone lookup | `SELECT customercode, customername, phonenumber FROM t WHERE phonenumber LIKE '%<digits_only_phone>' LIMIT 5` — CDS strips non-digits and prepends country code on insert, so a trailing LIKE without REGEXP_REPLACE is correct and sufficient |
 
 Always add a `LIMIT` clause. Use backtick table refs with the **full project.dataset.table path**:
 - B2C PD (primary): `` `oa-apmena-spacecds-ap-pd.space_cds_b2c_ds_replica_ae2_pd_public.table_name` ``
@@ -100,18 +100,19 @@ FROM `oa-apmena-spacecds-ap-dv.space_cds_b2b_ds_replica_ase1_dv_cds_tgt.customer
 WHERE customercode = '<CUSTOMERCODE>'
 LIMIT 5
 
--- 2. If 0 rows: search by phone (strip non-digits for fuzzy match)
+-- 2. If 0 rows: search by phone (CDS strips non-digits and prepends country code on insert —
+--    use trailing LIKE so country-code prefix doesn't break the match)
 SELECT customerkey, customercode, customername, phonenumber, emailaddress,
        isdeletedcustomer, blockedaccount, country
 FROM `oa-apmena-spacecds-ap-dv.space_cds_b2b_ds_replica_ase1_dv_cds_tgt.customer`
-WHERE REGEXP_REPLACE(phonenumber, r'[^0-9]', '') LIKE '%<DIGITS_ONLY_PHONE>%'
+WHERE phonenumber LIKE '%<DIGITS_ONLY_PHONE>'
 LIMIT 10
 
 -- 3. If customer found: check CFS profile (needed for login/search in the app)
 SELECT cfsmasterkey, email, firstname, lastname, professionalmobilenumber,
        isemailvalid, ismobilevalid, createddatetime, lastupdateddatetime
 FROM `oa-apmena-spacecds-ap-dv.space_cds_b2b_ds_replica_ase1_dv_cds_tgt.cfs_master`
-WHERE professionalmobilenumber LIKE '%<DIGITS_ONLY_PHONE>%'
+WHERE professionalmobilenumber LIKE '%<DIGITS_ONLY_PHONE>'
    OR LOWER(email) = LOWER('<EMAIL_IF_KNOWN>')
 LIMIT 5
 
@@ -233,6 +234,8 @@ Interpret results:
    - `consumer_pii`: add `AND status = 'Active'` to every query
    - `external_system_ids`: add `AND status = 'Active'` when joining via lucid
 3. **Use the B2C AE2 DV replica as historical fallback** — if a query against the primary dataset (`oa-apmena-spacecds-ap-pd.space_cds_b2c_ds_replica_ae2_pd_public`) returns 0 rows, retry the same query against the replica (`oa-apmena-spacecds-ap-dv.space_cds_b2c_ds_replica_ae2_dv_public`). The replica has identical table names and column schemas.
+4. **LUCID and MARSID are not unique across brands** — the same LUCID can exist in `consumer_pii` and `external_system_ids` under different brands. Always include `signature` (brand) and `isocountry` in the SELECT. When the incident provides brand/country context, also add `AND signature = '<BRAND>'` and `AND isocountry = '<ISO2>'` as filters to narrow to the correct record.
+5. **Phone number search: use trailing LIKE, not REGEXP_REPLACE** — CDS cleans phone numbers before insert (strips non-digits, prepends country code). Search with `phonenumber LIKE '%<digits_only_number>'` — the trailing wildcard absorbs the country code prefix without needing REGEXP_REPLACE. Applies to `consumer_pii.mobilenumber`, `customer.phonenumber`, and `cfs_master.professionalmobilenumber`.
 
 ### Key Tables for RCA — B2C
 
@@ -273,7 +276,7 @@ Interpret results:
 | Order number | `purchase` | `sourceordernumber` |
 | Order number (items) | `purchase_item` | `sourceordernumber` |
 | Consumer email | `consumer_pii` | `email` |
-| LUCID / MARS ID | `consumer_pii`, `external_system_ids` | `lucid` |
+| LUCID / MARS ID | `consumer_pii`, `external_system_ids` | `lucid` — always SELECT `signature` and `isocountry` alongside; same LUCID exists across brands, so filter by `signature` + `isocountry` when incident context provides them |
 | External consumer ID | `external_system_ids` | `sourceconsumerid` |
 | EAN / barcode | `product` | `ean` (also `purchase_item.eancode`) |
 | Shipping / delivery | `shipment` | `sourceordernumber` |
