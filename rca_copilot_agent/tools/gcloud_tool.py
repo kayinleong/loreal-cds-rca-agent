@@ -22,16 +22,46 @@ stdio protocol stream on stdout.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+_GCLOUD_FALLBACK_PATHS = [
+    # Google Cloud SDK installed in user's home Documents (common on macOS)
+    os.path.expanduser("~/Documents/google-cloud-sdk/bin/gcloud"),
+    os.path.expanduser("~/google-cloud-sdk/bin/gcloud"),
+    # Homebrew (Intel and Apple Silicon)
+    "/usr/local/bin/gcloud",
+    "/opt/homebrew/bin/gcloud",
+    "/snap/bin/gcloud",
+]
+
+
+def _find_gcloud() -> str:
+    """
+    Return the gcloud binary path.
+
+    VS Code and other GUI launchers strip shell PATH customisations, so
+    shutil.which("gcloud") often fails even when gcloud is installed. We
+    supplement it with a list of well-known SDK locations so the MCP server
+    works regardless of how it was launched.
+    """
+    path = shutil.which("gcloud")
+    if path:
+        return path
+    for candidate in _GCLOUD_FALLBACK_PATHS:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return "gcloud"  # let subprocess raise FileNotFoundError with a clear message
+
+
 def _run_gcloud(*args: str, timeout: int = 15) -> subprocess.CompletedProcess:
     """Run a gcloud command, capturing stdout and stderr."""
     return subprocess.run(
-        ["gcloud", *args],
+        [_find_gcloud(), *args],
         capture_output=True,
         text=True,
         timeout=timeout,
@@ -46,7 +76,7 @@ def _interactive_gcloud(*args: str, timeout: int = 600) -> bool:
     """
     try:
         result = subprocess.run(
-            ["gcloud", *args],
+            [_find_gcloud(), *args],
             stdout=sys.stderr,
             stderr=sys.stderr,
             timeout=timeout,
@@ -139,7 +169,7 @@ def set_quota_project(project_id: str | None = None) -> None:
         project_id = os.environ.get("BQ_PROJECT", "oa-apmena-spacecds-ap-pd")
     try:
         subprocess.run(
-            ["gcloud", "auth", "application-default", "set-quota-project", project_id],
+            [_find_gcloud(), "auth", "application-default", "set-quota-project", project_id],
             stdout=sys.stderr,
             stderr=sys.stderr,
             timeout=30,
