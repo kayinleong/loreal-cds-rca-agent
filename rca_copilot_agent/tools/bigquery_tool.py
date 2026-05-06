@@ -50,6 +50,24 @@ def _find_bq() -> str:
     return "bq"  # let subprocess raise FileNotFoundError with a clear message
 
 
+def _sdk_env() -> dict:
+    """
+    Return os.environ copy with the Cloud SDK bin/ dir prepended to PATH.
+
+    VS Code (and other GUI launchers) strip shell PATH customisations, so even
+    when bq is resolved via _find_bq(), bq itself calls gcloud internally for
+    authentication and fails because gcloud is not on the stripped PATH.
+    Prepending the SDK bin dir to the subprocess environment fixes this.
+    """
+    bq_binary = _find_bq()
+    env = os.environ.copy()
+    if bq_binary != "bq":
+        bin_dir = os.path.dirname(os.path.abspath(bq_binary))
+        existing = env.get("PATH", "")
+        env["PATH"] = f"{bin_dir}:{existing}" if existing else bin_dir
+    return env
+
+
 # schema.json lives in the repo root (3 levels up from rca_copilot_agent/tools/)
 _SCHEMA_JSON = Path(__file__).resolve().parent.parent.parent / "schema.json"
 
@@ -465,7 +483,7 @@ def is_enabled() -> bool:
 def _bq_cli_available() -> bool:
     """True when the bq CLI binary is reachable (checks PATH and fallback locations)."""
     try:
-        r = subprocess.run([_find_bq(), "version"], capture_output=True, timeout=5)
+        r = subprocess.run([_find_bq(), "version"], capture_output=True, timeout=5, env=_sdk_env())
         return r.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
@@ -491,6 +509,7 @@ def _bq_cli_execute(sql: str, project: str, max_rows: int = 100) -> QueryResult:
             capture_output=True,
             text=True,
             timeout=60,
+            env=_sdk_env(),
         )
         stderr = proc.stderr.strip()
         stdout = proc.stdout.strip()
