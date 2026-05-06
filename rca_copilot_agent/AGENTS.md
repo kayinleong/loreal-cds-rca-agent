@@ -75,9 +75,15 @@ For each hypothesis run one or more targeted queries:
 | Phone lookup | `SELECT customercode, customername, phonenumber FROM t WHERE REGEXP_REPLACE(phonenumber, r'\D', '') LIKE '%…%' LIMIT 5` |
 
 Always add a `LIMIT` clause. Use backtick table refs with the **full project.dataset.table path**:
-- B2C PD: `` `oa-apmena-spacecds-ap-pd.space_cds_b2c_ds_replica_ae2_pd_public.table_name` ``
+- B2C PD (primary): `` `oa-apmena-spacecds-ap-pd.space_cds_b2c_ds_replica_ae2_pd_public.table_name` ``
+- B2C AE2 DV (historical fallback): `` `oa-apmena-spacecds-ap-dv.space_cds_b2c_ds_replica_ae2_dv_public.table_name` ``
 - B2B SEA DV: `` `oa-apmena-spacecds-ap-dv.space_cds_b2b_ds_replica_ase1_dv_cds_tgt.table_name` ``
 - B2B ME DV: `` `oa-apmena-spacecds-ap-dv.space_cds_b2b_ds_replica_ae2_dv_cds_tgt.table_name` ``
+
+**Query constraints (always enforce):**
+- Do NOT filter by `recordstatus` — it is a CDC internal field
+- For `consumer_pii` and `external_system_ids`: add `AND status = 'Active'`
+- If primary returns 0 rows for a B2C query, retry against the AE2 DV replica
 
 **BigQuery billing projects:** The tool automatically routes jobs to the correct billing project based on the table reference. No action required — but always use the fully-qualified `` `project.dataset.table` `` form.
 
@@ -212,12 +218,21 @@ Interpret results:
 |---------|----------|
 | `space_cds_b2b_ds_replica_ae2_dv_cds_tgt` | B2B incident in Middle East region (SAP orders, invoices, salon accounts) |
 | `space_cds_b2b_ds_replica_ase1_dv_cds_tgt` | B2B incident in Southeast Asia (same schema as AE2) |
+| `space_cds_b2c_ds_replica_ae2_dv_public` | **B2C historical fallback** — same schema as primary; query here when primary (ae2_pd_public) returns 0 rows |
 | `space_cds_b2c_ds_replica_ase1_dv_public` | B2C ASE1 pipeline debug or survey data |
 
 **Access:** Read-only via gcloud ADC — no credentials in `.env` needed  
 **Dialect:** GoogleSQL (backtick refs, SAFE_DIVIDE, UNNEST, etc.)  
 **Schema source:** `schema.json` in repo root — `get_schema` and `list_bq_tables` read all datasets instantly  
 **Auth:** Run `gcloud auth application-default login` if BQ queries fail with auth errors
+
+### Query Rules (mandatory)
+
+1. **Never filter by `recordstatus`** — it is an internal CDC replication field. Ignore it in all queries.
+2. **Always filter consumers by `status = 'Active'`** — only active consumers are relevant for RCA.
+   - `consumer_pii`: add `AND status = 'Active'` to every query
+   - `external_system_ids`: add `AND status = 'Active'` when joining via lucid
+3. **Use the B2C AE2 DV replica as historical fallback** — if a query against the primary dataset (`oa-apmena-spacecds-ap-pd.space_cds_b2c_ds_replica_ae2_pd_public`) returns 0 rows, retry the same query against the replica (`oa-apmena-spacecds-ap-dv.space_cds_b2c_ds_replica_ae2_dv_public`). The replica has identical table names and column schemas.
 
 ### Key Tables for RCA — B2C
 

@@ -40,7 +40,10 @@ wiki/
 - Map incident identifiers to table columns
 
 ### Phase 3: VALIDATE
-For each hypothesis, run targeted BQ queries:
+For each hypothesis, run targeted BQ queries. Enforce these constraints on every query:
+- Do NOT use `recordstatus` in WHERE clauses
+- Add `AND status = 'Active'` to all `consumer_pii` queries
+- If a B2C query returns 0 rows from primary, retry against the AE2 DV replica
 
 | Check Type | Query Pattern |
 |-----------|---------------|
@@ -65,12 +68,26 @@ For each hypothesis, run targeted BQ queries:
 5. **Profile merge issue** → Duplicate profiles with different loyalty IDs
 6. **Region config** → Country/brand code mismatch in routing tables
 
-## BigQuery Dataset
+## BigQuery Datasets
 
-- Project: `oa-apmena-spacecds-ap-pd`
-- Dataset: `space_cds_b2c_ds_replica_ae2_pd_public`
-- Access: Read-only via service account
-- Dialect: GoogleSQL (backtick table refs, SAFE_DIVIDE, UNNEST, etc.)
+### Primary — B2C Production
+- **Project:** `oa-apmena-spacecds-ap-pd`
+- **Dataset:** `space_cds_b2c_ds_replica_ae2_pd_public`
+- **Access:** Read-only via gcloud ADC
+- **Dialect:** GoogleSQL (backtick table refs, SAFE_DIVIDE, UNNEST, etc.)
+
+### Additional — DV Replicas & B2B (`oa-apmena-spacecds-ap-dv`)
+| Dataset | Use When |
+|---------|----------|
+| `space_cds_b2c_ds_replica_ae2_dv_public` | **Historical fallback for B2C** — same schema as primary; query when primary returns 0 rows |
+| `space_cds_b2c_ds_replica_ase1_dv_public` | B2C ASE1 / SEA pipeline debug |
+| `space_cds_b2b_ds_replica_ae2_dv_cds_tgt` | B2B incidents in Middle East |
+| `space_cds_b2b_ds_replica_ase1_dv_cds_tgt` | B2B incidents in Southeast Asia |
+
+### Query Rules (mandatory)
+1. **Never filter by `recordstatus`** — it is an internal CDC replication field; ignore in all queries.
+2. **Always filter consumers by `status = 'Active'`** — add `AND status = 'Active'` to all `consumer_pii` queries.
+3. **Use replica as historical fallback** — if primary B2C query returns 0 rows, retry with `oa-apmena-spacecds-ap-dv.space_cds_b2c_ds_replica_ae2_dv_public` (same table/column names).
 
 ## Report Template
 

@@ -3,7 +3,7 @@
   "dataset": "space_cds_b2c_ds_replica_ae2_pd_public",
   "dialect": "GoogleSQL",
   "auth": "gcloud Application Default Credentials (ADC) \u2014 run: gcloud auth application-default login",
-  "note": "All tables share isocountry + signature as partition/cluster dimensions. recordstatus=1 means active. datastream_metadata is a CDC replication field \u2014 ignore in business queries.",
+  "note": "All tables share isocountry + signature as partition/cluster dimensions. Do not filter by recordstatus \u2014 it is an internal CDC replication field; ignore it in all queries. datastream_metadata is also a CDC replication field \u2014 ignore in business queries. For consumer queries, always filter by status = 'Active' (not recordstatus).",
   "all_datasets": {
     "oa-apmena-spacecds-ap-pd.space_cds_b2c_ds_replica_ae2_pd_public": "B2C production (primary) \u2014 consumer, purchase, loyalty, campaign, care_case. DEFAULT for all B2C RCA.",
     "oa-apmena-spacecds-ap-dv.space_cds_b2b_ds_replica_ae2_dv_cds_tgt": "B2B sales AE2 (Middle East) \u2014 business customers, SAP orders, invoices, deliveries, CFS profiles. Use for B2B incidents.",
@@ -31,8 +31,8 @@
     "order_exists": "SELECT EXISTS(SELECT 1 FROM `oa-apmena-spacecds-ap-pd.space_cds_b2c_ds_replica_ae2_pd_public.purchase` WHERE sourceordernumber = '<ORDER_NUM>' AND isocountry = '<COUNTRY>') AS found",
     "order_state": "SELECT sourceordernumber, currentstate, reasoncode, reasonmessage, orderdatetime, amountwithtax, currency FROM `oa-apmena-spacecds-ap-pd.space_cds_b2c_ds_replica_ae2_pd_public.purchase` WHERE sourceordernumber = '<ORDER_NUM>' LIMIT 1",
     "order_items": "SELECT pi.sourceitemid, pi.productname, pi.eancode, pi.itemstate, pi.reasoncode, pi.quantity FROM `oa-apmena-spacecds-ap-pd.space_cds_b2c_ds_replica_ae2_pd_public.purchase_item` pi WHERE pi.sourceordernumber = '<ORDER_NUM>' ORDER BY pi.linenumber",
-    "consumer_by_email": "SELECT lucid, status, consumertype, firstname, lastname, registrationdatetime FROM `oa-apmena-spacecds-ap-pd.space_cds_b2c_ds_replica_ae2_pd_public.consumer_pii` WHERE email = '<EMAIL>' AND isocountry = '<COUNTRY>' LIMIT 5",
-    "consumer_by_lucid": "SELECT lucid, status, consumertype, email, mobile, registrationdatetime FROM `oa-apmena-spacecds-ap-pd.space_cds_b2c_ds_replica_ae2_pd_public.consumer_pii` WHERE lucid = '<LUCID>' LIMIT 1",
+    "consumer_by_email": "SELECT lucid, status, consumertype, firstname, lastname, registrationdatetime FROM `oa-apmena-spacecds-ap-pd.space_cds_b2c_ds_replica_ae2_pd_public.consumer_pii` WHERE email = '<EMAIL>' AND isocountry = '<COUNTRY>' AND status = 'Active' LIMIT 5",
+    "consumer_by_lucid": "SELECT lucid, status, consumertype, email, mobile, registrationdatetime FROM `oa-apmena-spacecds-ap-pd.space_cds_b2c_ds_replica_ae2_pd_public.consumer_pii` WHERE lucid = '<LUCID>' AND status = 'Active' LIMIT 1",
     "resolve_external_id": "SELECT lucid, sourcesystemid, status FROM `oa-apmena-spacecds-ap-pd.space_cds_b2c_ds_replica_ae2_pd_public.external_system_ids` WHERE sourceconsumerid = '<EXT_ID>' LIMIT 5",
     "product_by_ean": "SELECT ean, name, type, productcategory, franchise, division FROM `oa-apmena-spacecds-ap-pd.space_cds_b2c_ds_replica_ae2_pd_public.product` WHERE ean = '<EAN>' LIMIT 1",
     "shipment_status": "SELECT shippingmethod, carrier, expecteddeliverydatetime, receiptdatetime FROM `oa-apmena-spacecds-ap-pd.space_cds_b2c_ds_replica_ae2_pd_public.shipment` WHERE sourceordernumber = '<ORDER_NUM>' LIMIT 5",
@@ -180,7 +180,7 @@
         {
           "name": "recordstatus",
           "type": "INTEGER",
-          "description": "1=active, 0=deleted"
+          "description": "Internal CDC replication field — do not use in queries"
         },
         {
           "name": "surveystatus",
@@ -351,7 +351,7 @@
         {
           "name": "recordstatus",
           "type": "INTEGER",
-          "description": "1=active, 0=deleted"
+          "description": "Internal CDC replication field — do not use in queries"
         }
       ],
       "relationships": [
@@ -464,7 +464,7 @@
         {
           "name": "recordstatus",
           "type": "INTEGER",
-          "description": "1=active, 0=deleted"
+          "description": "Internal CDC replication field — do not use in queries"
         }
       ],
       "relationships": [
@@ -618,7 +618,7 @@
         {
           "name": "recordstatus",
           "type": "INTEGER",
-          "description": "1=active, 0=deleted"
+          "description": "Internal CDC replication field — do not use in queries"
         }
       ],
       "relationships": [
@@ -686,7 +686,7 @@
         {
           "name": "recordstatus",
           "type": "INTEGER",
-          "description": "1=active, 0=deleted"
+          "description": "Internal CDC replication field — do not use in queries"
         }
       ],
       "relationships": [
@@ -9185,7 +9185,7 @@
             {
               "name": "recordstatus",
               "type": "INTEGER",
-              "description": ""
+              "description": "Internal CDC replication field — do not use in queries"
             },
             {
               "name": "country_iso_3166_1",
@@ -9291,7 +9291,7 @@
             {
               "name": "recordstatus",
               "type": "INTEGER",
-              "description": ""
+              "description": "Internal CDC replication field — do not use in queries"
             },
             {
               "name": "country_iso_3166_1",
@@ -9373,6 +9373,12 @@
           "relationships": []
         }
       }
+    },
+    "oa-apmena-spacecds-ap-dv.space_cds_b2c_ds_replica_ae2_dv_public": {
+      "description": "B2C DV AE2 — data vault replica of B2C for AE2 (Middle East). Same schema as primary dataset (space_cds_b2c_ds_replica_ae2_pd_public).",
+      "note": "Use as historical fallback when primary (ae2_pd_public) returns 0 rows. All primary table names and column schemas apply — just swap the project/dataset qualifier.",
+      "fallback_for": "oa-apmena-spacecds-ap-pd.space_cds_b2c_ds_replica_ae2_pd_public",
+      "tables": {}
     }
   }
 }
