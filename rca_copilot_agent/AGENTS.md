@@ -46,6 +46,62 @@ Edge is already installed — no additional browser download required.
 
 If playwright is not installed, the server falls back to the manual instructions in `.env.example`.
 
+## Running Without MCP (Skills / CLI Mode)
+
+L'Oréal's environment does not allow MCP servers. Use `run_tool.py` instead — it wraps every
+tool function and requires no server process:
+
+```bash
+# One-stop analysis for a single incident
+python rca_copilot_agent/run_tool.py analyze_incident --json '{"incident_number": "INC10403788"}'
+
+# List locally cached incidents
+python rca_copilot_agent/run_tool.py list_incidents --json '{}'
+
+# Fetch all incidents from a SNOW list URL
+python rca_copilot_agent/run_tool.py fetch_incidents --json '{"list_url": "https://loreal.service-now.com/..."}'
+
+# Run a BigQuery query (always include LIMIT)
+python rca_copilot_agent/run_tool.py query_bigquery \
+    --json '{"sql": "SELECT * FROM `oa-apmena-spacecds-ap-pd.space_cds_b2c_ds_replica_ae2_pd_public.purchase` WHERE sourceordernumber = \"ORD123\" LIMIT 5", "rationale": "Look up order status"}'
+
+# Save an RCA report to disk (MANDATORY after each incident)
+python rca_copilot_agent/run_tool.py save_rca_report \
+    --json '{"incident_number": "INC10403788", "report_text": "### WHAT HAPPENED\n..."}'
+
+# Send email notification (MANDATORY once per session, after all reports saved)
+python rca_copilot_agent/run_tool.py send_rca_email \
+    --json '{"session_summary": "Investigated INC10403788 — root cause: missing MARSID", "subject": "RCA Complete — INC10403788"}'
+```
+
+**For Claude Code users:** invoke the `/rca-copilot` skill (`.claude/skills/rca-copilot/SKILL.md`)
+which orchestrates the full RCA workflow using these CLI commands automatically via the `Bash` tool.
+
+**For GitHub Copilot users:** the `.github/agents/rca_copilot.agent.md` agent definition uses
+`run_in_terminal` to call `run_tool.py` directly — no MCP server process needed.
+
+**All 14 tool names** (valid `<tool_name>` values for `--json` calls):
+
+| Tool | Description |
+|------|-------------|
+| `list_incidents` | List locally cached incidents |
+| `fetch_incidents` | Download all incidents from a SNOW list URL |
+| `get_incident` | Fetch a single incident from SNOW by number |
+| `get_incident_summary` | Read locally cached incident's full text |
+| `analyze_incident` | ONE-STOP: fetch + attachments + identifiers |
+| `search_incidents` | Keyword-search local incidents |
+| `extract_identifiers` | Pull order IDs / emails / EAN codes from an incident |
+| `download_attachments` | Download attachment files for an incident |
+| `post_comment` | Post comment / work note to SNOW |
+| `list_bq_tables` | List all BQ tables with RCA purpose |
+| `get_schema` | Get column names and query patterns for a table |
+| `query_bigquery` | Run a read-only SELECT query |
+| `save_rca_report` | **MANDATORY** — save completed RCA to disk |
+| `send_rca_email` | **MANDATORY** — notify reviewer when session done |
+
+The credential refresh (`auth_tool`) and gcloud ADC check (`gcloud_tool`) also run automatically
+at CLI startup — same as the MCP server startup sequence.
+
 ## Investigation Workflow
 
 ### Phase 1 — INGEST
