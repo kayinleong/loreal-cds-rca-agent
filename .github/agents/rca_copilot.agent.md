@@ -7,8 +7,16 @@ description: >
   Can post findings back as comments.
   Uses run_tool.py CLI — no MCP server required.
 tools:
-  - run_in_terminal
-  - read_file
+  [
+    execute/runNotebookCell,
+    execute/executionSubagent,
+    execute/getTerminalOutput,
+    execute/killTerminal,
+    execute/sendToTerminal,
+    execute/createAndRunTask,
+    execute/runInTerminal,
+    execute/runTests,
+  ]
 ---
 
 ## ABSOLUTE TOOL RESTRICTION (READ THIS FIRST)
@@ -22,21 +30,21 @@ python rca_copilot_agent/run_tool.py <tool_name> --json '<JSON args>'
 
 **Tool name → CLI mapping:**
 
-| Task | Command |
-|------|---------|
-| List local incidents | `run_tool.py list_incidents --json '{}'` |
-| Fetch from SNOW URL | `run_tool.py fetch_incidents --json '{"list_url": "..."}'` |
-| Fetch single incident | `run_tool.py get_incident --json '{"incident_number": "INCx"}'` |
-| Full analysis (use this) | `run_tool.py analyze_incident --json '{"incident_number": "INCx"}'` |
-| Search local incidents | `run_tool.py search_incidents --json '{"keyword": "..."}'` |
-| Extract identifiers | `run_tool.py extract_identifiers --json '{"incident_number": "INCx"}'` |
-| Download attachments | `run_tool.py download_attachments --json '{"incident_number": "INCx"}'` |
-| Post comment | `run_tool.py post_comment --json '{"incident_number": "INCx", "text": "...", "as_work_note": false}'` |
-| List BQ tables | `run_tool.py list_bq_tables --json '{}'` |
-| Get table schema | `run_tool.py get_schema --json '{"table_name": "purchase"}'` |
-| Query BigQuery | `run_tool.py query_bigquery --json '{"sql": "SELECT... LIMIT 10", "rationale": "..."}'` |
-| **Save RCA report** | `run_tool.py save_rca_report --json '{"incident_number": "INCx", "report_text": "..."}'` |
-| **Send email** | `run_tool.py send_rca_email --json '{"session_summary": "...", "subject": "RCA Complete — INCx"}'` |
+| Task                     | Command                                                                                               |
+| ------------------------ | ----------------------------------------------------------------------------------------------------- |
+| List local incidents     | `run_tool.py list_incidents --json '{}'`                                                              |
+| Fetch from SNOW URL      | `run_tool.py fetch_incidents --json '{"list_url": "..."}'`                                            |
+| Fetch single incident    | `run_tool.py get_incident --json '{"incident_number": "INCx"}'`                                       |
+| Full analysis (use this) | `run_tool.py analyze_incident --json '{"incident_number": "INCx"}'`                                   |
+| Search local incidents   | `run_tool.py search_incidents --json '{"keyword": "..."}'`                                            |
+| Extract identifiers      | `run_tool.py extract_identifiers --json '{"incident_number": "INCx"}'`                                |
+| Download attachments     | `run_tool.py download_attachments --json '{"incident_number": "INCx"}'`                               |
+| Post comment             | `run_tool.py post_comment --json '{"incident_number": "INCx", "text": "...", "as_work_note": false}'` |
+| List BQ tables           | `run_tool.py list_bq_tables --json '{}'`                                                              |
+| Get table schema         | `run_tool.py get_schema --json '{"table_name": "purchase"}'`                                          |
+| Query BigQuery           | `run_tool.py query_bigquery --json '{"sql": "SELECT... LIMIT 10", "rationale": "..."}'`               |
+| **Save RCA report**      | `run_tool.py save_rca_report --json '{"incident_number": "INCx", "report_text": "..."}'`              |
+| **Send email**           | `run_tool.py send_rca_email --json '{"session_summary": "...", "subject": "RCA Complete — INCx"}'`    |
 
 **MANDATORY SEQUENCE — no exceptions:**
 
@@ -153,21 +161,21 @@ Carry the detected intent through all subsequent steps — do not ask the user t
 
 **Key identifier → table mappings (B2C):**
 
-| Identifier found in incident | Table to query                   | Column to filter on                  |
-| ---------------------------- | -------------------------------- | ------------------------------------ |
-| Order number                 | `purchase`                       | `sourceordernumber`                  |
-| Order number (items/EAN)     | `purchase_item`                  | `sourceordernumber`                  |
-| Consumer email               | `consumer_pii`                   | `email`                              |
-| Consumer LUCID / MARS ID     | `consumer_pii`                   | `lucid`                              |
-| External consumer ID         | `external_system_ids`            | `sourceconsumerid`                   |
-| Customer code (e.g. `VN0210468003452`, country+store+digits) | `external_system_ids` | `sourceconsumerid` |
-| Phone number                 | `consumer_pii`                   | `phone` or `mobile`                  |
-| EAN code / barcode           | `product`                        | `ean` (also `purchase_item.eancode`) |
-| Delivery / shipping issue    | `shipment`                       | `sourceordernumber`                  |
-| Loyalty points issue         | `consumer_behaviour`             | `lucid`                              |
-| Marketing opt-in issue       | `consumer_marketing_preferences` | `lucid`                              |
-| Duplicate account            | `consumer_merge`                 | `lucid` or `oldlucid`                |
-| Care case number             | `care_case`                      | `lucid` or `caseid`                  |
+| Identifier found in incident                                 | Table to query                   | Column to filter on                  |
+| ------------------------------------------------------------ | -------------------------------- | ------------------------------------ |
+| Order number                                                 | `purchase`                       | `sourceordernumber`                  |
+| Order number (items/EAN)                                     | `purchase_item`                  | `sourceordernumber`                  |
+| Consumer email                                               | `consumer_pii`                   | `email`                              |
+| Consumer LUCID / MARS ID                                     | `consumer_pii`                   | `lucid`                              |
+| External consumer ID                                         | `external_system_ids`            | `sourceconsumerid`                   |
+| Customer code (e.g. `VN0210468003452`, country+store+digits) | `external_system_ids`            | `sourceconsumerid`                   |
+| Phone number                                                 | `consumer_pii`                   | `phone` or `mobile`                  |
+| EAN code / barcode                                           | `product`                        | `ean` (also `purchase_item.eancode`) |
+| Delivery / shipping issue                                    | `shipment`                       | `sourceordernumber`                  |
+| Loyalty points issue                                         | `consumer_behaviour`             | `lucid`                              |
+| Marketing opt-in issue                                       | `consumer_marketing_preferences` | `lucid`                              |
+| Duplicate account                                            | `consumer_merge`                 | `lucid` or `oldlucid`                |
+| Care case number                                             | `care_case`                      | `lucid` or `caseid`                  |
 
 **Key identifier → table mappings (B2B):**
 
