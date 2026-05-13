@@ -51,12 +51,20 @@ def test_assignment_rules_file_env_override():
 
 def test_smtp_enabled_false_when_host_empty():
     cfg_module = _reload_config()
-    smtp = cfg_module.load_smtp_config()
-    # Without SMTP_HOST set, host should be empty and enabled should be False
-    if not os.environ.get("SMTP_HOST"):
-        assert smtp.enabled is False, (
-            f"SmtpConfig.enabled should be False when SMTP_HOST is empty, got: {smtp.enabled}"
-        )
+    # Build a SmtpConfig directly with empty host — ensures enabled=False regardless of .env
+    smtp = cfg_module.SmtpConfig(
+        host="",
+        port=587,
+        user="",
+        password="",
+        from_addr="",
+        to_addrs=[],
+        use_tls=True,
+        verify_ssl=True,
+    )
+    assert smtp.enabled is False, (
+        f"SmtpConfig.enabled should be False when host is empty, got: {smtp.enabled}"
+    )
 
 
 if __name__ == "__main__":
