@@ -1,0 +1,56 @@
+{
+  "version": "1.0",
+  "note": "[USER-CONFIRM] Routing matrix for SPACE CDS L2 assignment groups. Keywords are inferred — verify against SharePoint routing matrix before production use. Update keywords here — no code changes needed.",
+  "groups": {
+    "APAC - SGP - SPACE CDS SAPMENA L2 Support": {
+      "keywords": ["SAP", "SAPMENA", "SGP", "Singapore", "pipeline", "CDS", "SPACE CDS", "SAP order", "product sync", "ERP"],
+      "description": "SAP/ERP integration issues; Singapore-hosted SPACE CDS services; product data sync failures",
+      "weight": 1.0
+    },
+    "APAC - THN - Retail IT": {
+      "keywords": ["Thailand", "THN", "POS", "point of sale", "retail store", "in-store", "cashier", "terminal", "store network", "printer"],
+      "description": "Thailand retail IT, in-store POS systems, store network issues",
+      "weight": 1.0
+    },
+    "APAC - ZN - iBeauty 2.0 - Retail - L2": {
+      "keywords": ["iBeauty", "beauty advisor", "BA", "in-store app", "clienteling", "advisor app", "consultation", "skin", "shade", "retail app"],
+      "description": "iBeauty POS application issues, in-store retail app",
+      "weight": 1.0
+    },
+    "APAC - ZN - O+O OMNISALES.RETAIL - CAPGEMINI-GDC-MARS - RUN - L2": {
+      "keywords": ["OMNISALES", "omni", "MARS", "Capgemini", "GDC", "click and collect", "ship from store", "inventory", "retail order", "MARS integration"],
+      "description": "Omnichannel retail operations (Capgemini MARS team)",
+      "weight": 1.0
+    },
+    "APAC - ZN - O+O ONLINE.CED - CAPGEMINI-GDC-SPACE-GDS - RUN - L2": {
+      "keywords": ["CED", "e-commerce", "online", "web order", "cart", "checkout", "SPACE GDS", "online store", "SPACE-GDS"],
+      "description": "Online e-commerce platform issues (Capgemini SPACE GDS team)",
+      "weight": 1.0
+    },
+    "APAC - ZN - O+O.CRM - L2": {
+      "keywords": ["CRM", "loyalty", "consumer profile", "lucid", "registration", "account", "consent", "GDPR", "Salesforce", "marketing", "email campaign"],
+      "description": "CRM, consumer identity, loyalty programme issues",
+      "weight": 1.0
+    },
+    "APAC - ZN - O+O.NGLORA - L2": {
+      "keywords": ["NGLORA", "LORA", "ORA", "loyalty rewards", "points", "tier", "redemption", "rewards programme"],
+      "description": "NGLORA loyalty platform issues",
+      "weight": 1.0
+    },
+    "APAC - ZN - O+O.OPERATIONS - L2": {
+      "keywords": ["operations", "ops", "batch", "ETL", "pipeline", "data sync", "integration", "API", "webhook", "data ingestion"],
+      "description": "Operational issues: ETL, API integrations, data pipelines",
+      "weight": 1.0
+    },
+    "APAC - ZN - SPACE B2C Hypercare": {
+      "keywords": ["hypercare", "go live", "go-live", "launch", "cutover", "P1", "escalation", "new market", "B2C", "regression", "critical"],
+      "description": "Post-go-live hypercare support for new market launches",
+      "weight": 1.0
+    },
+    "TECH FNDN - WW - HIP INCIDENT L2": {
+      "keywords": ["infrastructure", "HIP", "platform", "cloud", "server", "network", "certificate", "SSL", "DNS", "database", "auth", "SSO"],
+      "description": "Technical foundation: infrastructure, cloud platform, certificates",
+      "weight": 1.0
+    }
+  }
+}
