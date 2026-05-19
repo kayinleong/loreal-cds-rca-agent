@@ -42,6 +42,9 @@ python-multipart==0.0.27
 referencing==0.37.0
 requests==2.33.1
 rpds-py==0.30.0
+# Retrieval (kNN) for ticketasg_copilot_agent — adds ~250 MB to .venv (torch CPU + transformers).
+# First run downloads `all-MiniLM-L6-v2` (~80 MB) to ~/.cache/huggingface/.
+sentence-transformers>=2.5.0
 six==1.17.0
 sse-starlette==3.4.1
 starlette==1.0.0

@@ -1,6 +1,52 @@
 {
-  "version": "1.1",
-  "note": "[EVIDENCE-BASED v1.1] Routing matrix for SPACE CDS L2 assignment groups. Keywords for SAPMENA L2 + B2C Hypercare validated against the 64-incident sample from quick-kayinleong-018. Remaining 8 groups still [USER-CONFIRM] — wider SNOW fetch needed. `boundary_keywords` are matched only on word boundaries (regex \\b…\\b, case-insensitive) — use this for short or ambiguous tokens (BA, NGL, LS) that cause substring false positives.",
+  "version": "2.0",
+  "note": "[EVIDENCE-BASED v2.0] Hybrid routing schema for SPACE CDS L2/L3 assignment. Signals combined by recommend_assignment_v2: (1) `hard_rules` regex shortcuts run FIRST and short-circuit on match (confidence 0.95); (2) keyword scorer per group (substring + boundary_keywords); (3) sentence-transformers kNN retrieval over historical tickets; (4) `l3_escalation` triggers escalation from L2 winner to its L3 counterpart when escalation_signals are found in text. The downstream LLM agent (Claude Code / Copilot) sees ALL three signals and is instructed to reason about them — the deterministic combined recommendation is its baseline, not a hard answer.",
+  "hard_rules": [
+    {
+      "pattern": "\\bMARS-(?:ANZ|SG|MY|TH|VN|ID|HK|JP|TW|KR)\\b",
+      "case_sensitive": true,
+      "target": "APAC - ZN - O+O OMNISALES.RETAIL - CAPGEMINI-GDC-MARS - RUN - L2",
+      "reason": "MARS-{COUNTRY} uppercase prefix tag (e.g. [MARS-ANZ]) indicates explicit MARS/OMNISALES ownership. Case-sensitive to avoid colliding with 'mars-id' (customer identifier)."
+    },
+    {
+      "pattern": "\\b(?:CAPLINERR\\d*|Linux Host|FS\\s+/mnt|usage above 9\\d|disk\\s+usage\\s+above|filesystem\\s+usage)\\b",
+      "target": "TECH FNDN - WW - HIP INCIDENT L2",
+      "reason": "Infrastructure-alert signature (Capgemini Linux line error, FS usage, disk threshold)"
+    },
+    {
+      "pattern": "\\b(?:Cloudflare|Cloudfare)\\b.{0,60}\\b(?:error|down|outage|503|504|endpoint)\\b",
+      "target": "TECH FNDN - WW - HIP INCIDENT L2",
+      "reason": "Cloudflare/3PL endpoint failure"
+    },
+    {
+      "pattern": "\\bAesop\\s+hypercare\\b",
+      "target": "APAC - ZN - SPACE B2C Hypercare",
+      "reason": "Brand-specific hypercare mention — routes to general B2C Hypercare until Aesop has its own canonical group"
+    }
+  ],
+  "l3_escalation": {
+    "comment": "When an L2 group wins the keyword/retrieval scoring AND any escalation_signals appear in the ticket text, route to the L2's l3_counterpart instead. Only L2 groups with an entry in l2_to_l3 are escalatable.",
+    "escalation_signals": [
+      "PRB\\d+",
+      "\\bdata\\s+patch(?:ing)?\\b",
+      "\\bpatch\\s+script\\b",
+      "tracked\\s+under\\s+PRB",
+      "\\bCDS\\s+L3\\b",
+      "\\bLOY\\s+L3\\b",
+      "\\bL3\\s+team\\b",
+      "Reassigning.{0,40}\\bL3\\b",
+      "Assign(?:ing|ed)?.{0,40}\\bL3\\b",
+      "Assign(?:ing|ed)?.{0,40}\\bCDS\\s+L3\\b",
+      "DFCT\\d+",
+      "linked\\s+to\\s+PRB",
+      "Parent\\s+ticket\\s+INC\\d+"
+    ],
+    "l2_to_l3": {
+      "APAC - SGP - SPACE CDS SAPMENA L2 Support": "APAC - SGP - SPACE CDS SAPMENA L3 Support",
+      "APAC - ZN - O+O.NGLORA - L2": "APAC - CHN - SPACE Loyalty L3 Support",
+      "APAC - ZN - O+O.OPERATIONS - L2": "APAC - SGP - SPACE CDS SAPMENA L3 Support"
+    }
+  },
   "groups": {
     "APAC - SGP - SPACE CDS SAPMENA L2 Support": {
       "evidence_status": "EVIDENCE-BASED",

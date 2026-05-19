@@ -323,6 +323,76 @@ def create_mcp_server(reports_dir: str):
                 },
             ),
             Tool(
+                name="recommend_assignment_v2",
+                description=(
+                    "Hybrid recommender combining (1) hard-rules regex shortcuts, "
+                    "(2) keyword scoring (the v1 path), (3) sentence-transformers kNN retrieval "
+                    "over the local incident corpus, and (4) L2 → L3 escalation when PRB / "
+                    "data-patch / L3 signals are present. Returns a deterministic "
+                    "`recommended_group` plus all three individual signals in `signals` so the "
+                    "LLM client can override the combined answer when it has reason to. "
+                    "Source field tells you which signal won: "
+                    "'hard_rule' | 'l3_escalation' | 'retrieval+keyword' | 'retrieval_top1' | 'keyword'."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "incident_number": {"type": "string"},
+                        "short_description": {"type": "string"},
+                        "description": {"type": "string"},
+                        "category": {"type": "string", "default": ""},
+                        "subcategory": {"type": "string", "default": ""},
+                        "comments_text": {"type": "string", "default": ""},
+                        "work_notes_text": {"type": "string", "default": ""},
+                        "current_group": {"type": "string", "default": ""},
+                        "retrieval_index_path": {"type": "string", "default": ""},
+                        "retrieval_top_k": {"type": "integer", "default": 5},
+                    },
+                    "required": ["incident_number", "short_description", "description"],
+                },
+            ),
+            Tool(
+                name="find_similar_incidents",
+                description=(
+                    "kNN nearest-neighbour retrieval over the local incident corpus. "
+                    "Given a query_text (or a locally-cached incident_number), returns the top_k "
+                    "most semantically-similar incidents and their current assignment groups, "
+                    "plus a sum-of-scores tally per group. Useful as a second-opinion signal "
+                    "when keyword scoring is ambiguous, and especially for L3 routing where "
+                    "the static rules schema cannot represent every L3 group."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query_text": {
+                            "type": "string",
+                            "description": "Free-form text to search by. Either this OR incident_number must be supplied.",
+                        },
+                        "incident_number": {
+                            "type": "string",
+                            "description": "Look up a locally-cached incident and use its summary as the query. Excluded from neighbours.",
+                        },
+                        "top_k": {"type": "integer", "default": 5},
+                        "retrieval_index_path": {"type": "string", "default": ""},
+                    },
+                },
+            ),
+            Tool(
+                name="build_retrieval_index",
+                description=(
+                    "Build (or rebuild) the sentence-transformers retrieval index from "
+                    "_all_incidents.json. Run this once after a fetch_incidents to refresh the "
+                    "kNN corpus used by recommend_assignment_v2 and find_similar_incidents."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "incidents_json_path": {"type": "string", "default": ""},
+                        "retrieval_index_path": {"type": "string", "default": ""},
+                    },
+                },
+            ),
+            Tool(
                 name="save_assignment_report",
                 description=(
                     "Save a completed assignment analysis report to the local reports directory. "
@@ -582,6 +652,73 @@ async def _dispatch(name: str, arguments: dict, reports_dir: str) -> str:
             current_group=arguments.get("current_group", ""),
         )
         return json.dumps(result, indent=2)
+
+    elif name == "recommend_assignment_v2":
+        from tools.assignment_tool import recommend_assignment_v2
+        result = recommend_assignment_v2(
+            incident_number=arguments["incident_number"],
+            short_description=arguments["short_description"],
+            description=arguments["description"],
+            category=arguments.get("category", ""),
+            subcategory=arguments.get("subcategory", ""),
+            comments_text=arguments.get("comments_text", ""),
+            work_notes_text=arguments.get("work_notes_text", ""),
+            current_group=arguments.get("current_group", ""),
+            retrieval_index_path=arguments.get("retrieval_index_path", ""),
+            retrieval_top_k=int(arguments.get("retrieval_top_k", 5)),
+        )
+        return json.dumps(result, indent=2)
+
+    elif name == "find_similar_incidents":
+        from tools import retrieval_tool
+        from pathlib import Path as _P
+        idx_path = arguments.get("retrieval_index_path") or str(
+            _P(__file__).resolve().parent / "retrieval_index.npz"
+        )
+        query_text = arguments.get("query_text") or ""
+        if not query_text and arguments.get("incident_number"):
+            # If only an incident number given, pull its text from the local store
+            from tools.incident_store import get_summary
+            try:
+                query_text = get_summary(arguments["incident_number"]) or ""
+            except Exception:
+                query_text = ""
+        if not query_text:
+            return json.dumps({"error": "Provide query_text or a locally-cached incident_number."})
+        top_k = int(arguments.get("top_k", 5))
+        try:
+            neighbours = retrieval_tool.find_similar(
+                query_text=query_text,
+                top_k=top_k,
+                index_path=idx_path,
+                exclude_number=arguments.get("incident_number", ""),
+            )
+        except FileNotFoundError as exc:
+            return json.dumps({"error": str(exc), "hint": "Build the index with build_retrieval_index first."})
+        return json.dumps({
+            "neighbours": [
+                {"number": n["number"], "group": n["group"], "score": round(n["score"], 3)}
+                for n in neighbours
+            ],
+            "weighted_vote": {
+                k: round(v, 3) for k, v in retrieval_tool.vote_group(neighbours, mode="weighted")[2].items()
+            },
+        }, indent=2)
+
+    elif name == "build_retrieval_index":
+        from tools import retrieval_tool
+        from pathlib import Path as _P
+        idx_path = arguments.get("retrieval_index_path") or str(
+            _P(__file__).resolve().parent / "retrieval_index.npz"
+        )
+        incidents_json = arguments.get("incidents_json_path") or os.path.join(
+            reports_dir, "_all_incidents.json"
+        )
+        info = retrieval_tool.build_index(
+            incidents_json_path=incidents_json,
+            index_path=idx_path,
+        )
+        return json.dumps(info, indent=2)
 
     elif name == "save_assignment_report":
         number = arguments["incident_number"]

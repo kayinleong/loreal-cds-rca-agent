@@ -38,7 +38,10 @@ python ticketasg_copilot_agent/run_tool.py <tool_name> --json '<JSON args>'
 | Fetch single incident | `run_tool.py get_incident --json '{"incident_number": "INCx"}'` |
 | **Full analysis (use this)** | `run_tool.py analyze_incident --json '{"incident_number": "INCx"}'` |
 | Show routing rules | `run_tool.py get_assignment_rules --json '{}'` |
-| Recommend assignment | `run_tool.py recommend_assignment --json '{"incident_number": "INCx", "short_description": "...", "description": "...", "current_group": "..."}'` |
+| **Build retrieval index (one-time after fetch)** | `run_tool.py build_retrieval_index --json '{}'` |
+| **Recommend assignment (v2 hybrid)** | `run_tool.py recommend_assignment_v2 --json '{"incident_number": "INCx", "short_description": "...", "description": "...", "current_group": "..."}'` |
+| Find similar past tickets (kNN) | `run_tool.py find_similar_incidents --json '{"query_text": "...", "top_k": 5}'` |
+| Legacy keyword-only recommender | `run_tool.py recommend_assignment --json '{"incident_number": "INCx", ...}'` |
 | Search local incidents | `run_tool.py search_incidents --json '{"keyword": "...", "section": "all"}'` |
 | Post comment | `run_tool.py post_comment --json '{"incident_number": "INCx", "text": "...", "as_work_note": false}'` |
 | **Save report (MANDATORY)** | `run_tool.py save_assignment_report --json '{"incident_number": "INCx", "report_text": "..."}'` |
@@ -48,15 +51,38 @@ python ticketasg_copilot_agent/run_tool.py <tool_name> --json '<JSON args>'
 
 1. Call `analyze_incident` to gather all ticket data:
    `python ticketasg_copilot_agent/run_tool.py analyze_incident --json '{"incident_number": "INCx"}'`
-2. Call `get_assignment_rules` to read the routing matrix:
+2. Call `get_assignment_rules` to read the routing matrix (now includes hard_rules + l3_escalation):
    `python ticketasg_copilot_agent/run_tool.py get_assignment_rules --json '{}'`
-3. Call `recommend_assignment` with the incident details:
-   `python ticketasg_copilot_agent/run_tool.py recommend_assignment --json '{"incident_number": "INCx", "short_description": "...", "description": "...", "comments_text": "...", "current_group": "..."}'`
-4. Write the assignment analysis report.
-5. Call `save_assignment_report` BEFORE outputting the report. If you skip this call, you have failed.
+3. If the retrieval index does not yet exist (first analysis since the last fetch), build it once:
+   `python ticketasg_copilot_agent/run_tool.py build_retrieval_index --json '{}'`
+4. Call `recommend_assignment_v2` with the incident details:
+   `python ticketasg_copilot_agent/run_tool.py recommend_assignment_v2 --json '{"incident_number": "INCx", "short_description": "...", "description": "...", "comments_text": "...", "current_group": "..."}'`
+5. **Reason about the three signals** in the result — hard rule vs keyword vs retrieval vs L3 escalation. Do not blindly accept the top-level `recommended_group`; override it when one signal is clearly stronger than the combined heuristic. Write your reasoning into the report.
+6. Optionally call `find_similar_incidents` for additional context (e.g. to cite specific past tickets in the report).
+7. Write the assignment analysis report.
+8. Call `save_assignment_report` BEFORE outputting the report. If you skip this call, you have failed.
    `python ticketasg_copilot_agent/run_tool.py save_assignment_report --json '{"incident_number": "INCx", "report_text": "..."}'`
-6. After ALL `save_assignment_report` calls for the session, call `send_assignment_email` ONCE:
+9. After ALL `save_assignment_report` calls for the session, call `send_assignment_email` ONCE:
    `python ticketasg_copilot_agent/run_tool.py send_assignment_email --json '{"session_summary": "...", "subject": "..."}'`
+
+### LLM-as-judge — how to weigh the v2 signals
+
+`recommend_assignment_v2` returns `recommended_group` (the deterministic combined answer) plus a `signals` block with the raw inputs. Your job:
+
+| Signal | Strong | Weak |
+|---|---|---|
+| `signals.hard_rule` | non-null → **trust it** (high-precision regex shortcuts: MARS-{country}, Linux Host, ...) | null — ignore |
+| `signals.keyword.confidence` | ≥ 0.5, 3+ keywords matched | ≤ 0.2 with 1 keyword |
+| `signals.retrieval.top1.score` | ≥ 0.7 → semantically near-identical past ticket exists | < 0.5 → ignore retrieval |
+| `signals.retrieval.weighted_vote.tally` | one group ≥ 1.5 summed score AND ≥ 2 neighbours | scores split — no consensus |
+| `signals.l3_escalation.signals_matched` | non-empty AND `escalated_from_to.to` exists → recommend the L3 group | empty → stay at L2 |
+
+**Conflict resolution rules to apply when writing the report:**
+1. Hard rule wins everything.
+2. Else if escalation signals fired AND an L3 target exists → recommend L3.
+3. Else if keyword and retrieval top-1 agree AND retrieval top-1 ≥ 0.6 → high confidence in that group.
+4. Else if keyword and retrieval disagree → prefer retrieval when top-1 ≥ 0.7 AND ≥ 2 of top-5 are the same group; otherwise prefer keyword.
+5. Else if all signals weak → recommend **human review** in the report, do not auto-suggest.
 
 You MUST NOT use any tool other than `run_in_terminal` (for `run_tool.py` calls) and `read_file`
 (only for reading saved report files). Do not call any other tool, script, or command.
@@ -111,17 +137,33 @@ python ticketasg_copilot_agent/run_tool.py get_assignment_rules --json '{}'
 
 Read the rules and understand what keywords map to each group.
 
-### Step 4 — Recommend assignment
+### Step 4 — Recommend assignment (v2 hybrid)
 
 Extract from the incident: short_description, description, comments_text (join all comments and work notes), current_group.
 
+If the retrieval index does not yet exist (first analysis since the last fetch), build it once:
 ```bash
-python ticketasg_copilot_agent/run_tool.py recommend_assignment --json '{
+python ticketasg_copilot_agent/run_tool.py build_retrieval_index --json '{}'
+```
+
+Then call the v2 recommender:
+```bash
+python ticketasg_copilot_agent/run_tool.py recommend_assignment_v2 --json '{
   "incident_number": "<INCx>",
   "short_description": "<from incident>",
   "description": "<from incident>",
   "comments_text": "<joined comments and work notes>",
   "current_group": "<current assignment_group from incident>"
+}'
+```
+
+The response includes the deterministic `recommended_group` AND a `signals` block with the three raw signals. **Apply the LLM-as-judge rules** above to reason about the signals — do not blindly accept the combined answer when one signal is clearly stronger.
+
+Optionally fetch concrete similar past tickets to cite in the report:
+```bash
+python ticketasg_copilot_agent/run_tool.py find_similar_incidents --json '{
+  "query_text": "<short_description + key phrases>",
+  "top_k": 5
 }'
 ```
 

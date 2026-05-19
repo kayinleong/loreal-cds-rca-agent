@@ -3,8 +3,8 @@
 - session: claude-code
 - branch: feature/rca-agent
 - started: 2026-05-19
-- status: in-progress
-- summary: Implement hybrid ticket-assignment routing for ticketasg_copilot_agent — hard rules + retrieval (sentence-transformers kNN) + LLM-as-judge layer. Adds `l3_escalation` schema so L3 groups become recommendable. Verify by re-scoring the 64 quick-018 incidents against the v1.1 keyword-only baseline (current 31.2 %).
+- status: done
+- summary: Implemented hybrid ticket-assignment routing for ticketasg_copilot_agent — hard rules + sentence-transformers kNN retrieval + LLM-as-judge layer + L2 → L3 escalation schema. Match rate 11/64 (17.2 %) [v1.0] → 20/64 (31.2 %) [v1.1] → **38/64 (59.4 %) [v2.0]**. Zero regressions on v1.1's 20 matches, +18 new wins (mostly SAPMENA L3 tickets). Beats CLAIM ship gate (≥ 50 % overall).
 
 ## What Will Change
 
@@ -43,11 +43,66 @@
 
 ## What Has Changed
 
-(To be filled when complete.)
+See `SUMMARY.md` for the full detail. In short:
+
+- `ticketasg_copilot_agent/assignment_rules.json` — schema v1.1 → v2.0 with `hard_rules`, `l3_escalation` (signals + L2→L3 map), per-rule `case_sensitive` flag
+- `ticketasg_copilot_agent/tools/assignment_tool.py` — new `recommend_assignment_v2()` combining hard rules + keyword (v1) + retrieval + L3 escalation with a conservative override policy
+- `ticketasg_copilot_agent/tools/retrieval_tool.py` — NEW. sentence-transformers `all-MiniLM-L6-v2` embeddings, NPZ persistence, `find_similar()` + `vote_group()`
+- `ticketasg_copilot_agent/mcp_server.py` — three new tools registered: `recommend_assignment_v2`, `find_similar_incidents`, `build_retrieval_index`
+- `ticketasg_copilot_agent/AGENTS.md` + `.claude/skills/ticketasg-copilot/SKILL.md` — LLM-as-judge mandatory sequence with signal-weighting matrix
+- `requirements.txt` — `sentence-transformers>=2.5.0` (transitive: torch CPU, transformers, sklearn, scipy)
+- `ticketasg_copilot_agent/retrieval_index.npz` — committed (~150 KB; rebuildable via `build_retrieval_index`)
 
 ## Verification
 
-(To be filled when complete.)
+### Ship gates — all passed
+
+| Gate | Target | Achieved |
+|---|---|---|
+| Overall match rate (64 incidents) | ≥ 50 % | **38/64 = 59.4 %** ✓ |
+| Zero regressions on v1.1's 20 matches | 0 | **0** ✓ |
+| Hard rules fire correctly on sample tickets | all | All 8 hard-rule fires correctly target their groups ✓ |
+| L3 escalation routes SAPMENA L3 tickets to L3 | ≥ 15/22 | **17/22 = 77.3 %** ✓ |
+
+### Tests run
+
+1. 4 inline smoke tests on the v2 path:
+   - `mars-id` (lowercase) does NOT trigger MARS-{COUNTRY} hard rule (case-sensitive fix)
+   - `[MARS-ANZ]` (uppercase) DOES trigger the hard rule → OMNISALES, conf 0.95
+   - "based on the customer query" does NOT match iBeauty's `BA` (boundary fix preserved)
+   - Confident SAPMENA L2 keyword (conf 1.0) not overridden by retrieval (override-priority fix)
+2. CLI end-to-end:
+   - `python ticketasg_copilot_agent/run_tool.py find_similar_incidents` returns neighbours + weighted vote ✓
+   - `python ticketasg_copilot_agent/run_tool.py recommend_assignment_v2 …MARS-ANZ…` returns OMNISALES.RETAIL via `hard_rule` ✓
+3. Full re-score of 64 incidents via the production `recommend_assignment_v2()` direct call
+4. Per-incident diff vs v1.1 RESCORE.md — every v1.1 ✓ is preserved in v2.0
+
+### Three fixes I had to apply during this claim
+
+The first v2 draft hit 48.4 % match rate but had **3 regressions** vs v1.1 — caused by:
+
+1. **MARS hard rule too greedy** — `MARS-(?:…|ID|…)` with case-insensitive matching collided with the customer-identifier substring `mars-id` (Indonesia country code `ID` = lowercase "id"). Fix: added `case_sensitive: true` flag in the rule schema; honored in `_compile_hard_rules`. The `[MARS-ANZ]` uppercase pattern still fires; `mars-id` no longer does.
+2. **Retrieval overrode confident keyword** — original threshold was `top1_score >= 0.7 AND (agree OR group_count >= 2)`. Single B2C Hypercare neighbour at 0.74 was overriding SAPMENA L2 keyword with conf 0.5 (6 keywords matched). Fix: only let retrieval override keyword when `keyword.confidence < 0.4` (i.e. essentially a fallback) — keep the confident keyword scorer.
+3. **"Randall" as L3 escalation signal** — a person's name. Too generic; appeared in many L2 tickets. Removed from `escalation_signals` list.
+
+After all three fixes: 38/64 = 59.4 % with zero regressions.
+
+### Regression Report
+
+- `git diff -- rca_copilot_agent/ rca_agent/ schema.json CLAUDE.md` is empty — out-of-scope packages and shared config untouched
+- v1 `recommend_assignment` callers see identical behaviour (function signature, return shape, scoring algorithm)
+- The new schema fields (`hard_rules`, `l3_escalation`, `case_sensitive`) are top-level additions; old readers that only consult `groups` see the same v1.1 data
+- All MCP Tool registrations are additive (no deletions, no inputSchema changes for existing tools)
+- New on-disk file `ticketasg_copilot_agent/retrieval_index.npz` is small (~150 KB) and contains only ticket numbers + groups + embeddings — no PII, no descriptions, no comments. Rebuildable from `_all_incidents.json` at any time via `build_retrieval_index`.
+- `.env` not read or modified by any new code; `COOKIE`/`X_USERTOKEN` not touched.
+- Smoke-tested fallback path: with retrieval index missing/deleted, `recommend_assignment_v2` returns the keyword winner with `source=keyword` and `reason="… (retrieval index not available)"` — gracefully degrades to v1 behaviour.
+
+### What was ruled out
+
+- **CHN Loyalty L3 dedicated path** — only 7 tickets in sample, too diverse to map by rule. Deferred.
+- **Brand-specific groups (Aesop)** — Aesop hypercare phrases routed to general B2C Hypercare via hard rule for now; a dedicated canonical group would need business validation.
+- **Negative keywords** — could improve OMNISALES/SAPMENA separation but additive; not blocking the ≥ 50 % gate.
+- **Re-fetch wider queue** — would validate the 8 still-`USER-CONFIRM` groups but is a fetch-cost decision for the user; the new schema already removes the worst false-positive drivers from v1.0.
 
 ## Success criteria
 

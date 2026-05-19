@@ -278,3 +278,346 @@ def recommend_assignment(
         "reassignment_needed": reassignment_needed,
         "reassignment_reason": reassignment_reason,
     }
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# v2 — hybrid routing (hard rules + keyword + retrieval + L3 escalation)
+# ════════════════════════════════════════════════════════════════════════════
+
+# Compiled regex caches (built lazily, refreshed on rules reload)
+_hard_rules_compiled: Optional[list] = None
+_escalation_signals_compiled: Optional[list] = None
+
+
+def _compile_hard_rules() -> list:
+    """Return list of (compiled_regex, target_group, reason) tuples.
+
+    Rules default to case-insensitive matching. Set `"case_sensitive": true`
+    on a rule when the pattern relies on uppercase to avoid substring collisions
+    (e.g. MARS-ID vs mars-id customer identifier).
+    """
+    global _hard_rules_compiled
+    if _hard_rules_compiled is not None:
+        return _hard_rules_compiled
+    rules = _load_rules()
+    hard = rules.get("hard_rules", [])
+    out = []
+    for r in hard:
+        pattern = r.get("pattern")
+        target = r.get("target")
+        reason = r.get("reason", "")
+        case_sensitive = bool(r.get("case_sensitive", False))
+        if not pattern or not target:
+            continue
+        try:
+            flags = 0 if case_sensitive else re.IGNORECASE
+            out.append((re.compile(pattern, flags), target, reason))
+        except re.error as e:
+            logger.warning(f"[ASSIGNMENT] Skipping invalid hard-rule pattern {pattern!r}: {e}")
+    _hard_rules_compiled = out
+    return out
+
+
+def _compile_escalation_signals() -> list:
+    """Return list of compiled escalation-signal regexes."""
+    global _escalation_signals_compiled
+    if _escalation_signals_compiled is not None:
+        return _escalation_signals_compiled
+    rules = _load_rules()
+    signals = rules.get("l3_escalation", {}).get("escalation_signals", [])
+    out = []
+    for pat in signals:
+        try:
+            out.append(re.compile(pat, re.IGNORECASE))
+        except re.error as e:
+            logger.warning(f"[ASSIGNMENT] Skipping invalid escalation signal {pat!r}: {e}")
+    _escalation_signals_compiled = out
+    return out
+
+
+def _check_hard_rules(text: str) -> Optional[dict]:
+    """Run all hard_rules against `text`. Returns first match info, or None."""
+    for regex, target, reason in _compile_hard_rules():
+        m = regex.search(text)
+        if m:
+            return {
+                "target": target,
+                "reason": reason,
+                "matched_text": m.group(0)[:80],
+            }
+    return None
+
+
+def _check_escalation_signals(text: str) -> list[str]:
+    """Return the matched escalation signal strings (or [] if none)."""
+    hits: list[str] = []
+    for regex in _compile_escalation_signals():
+        m = regex.search(text)
+        if m:
+            hits.append(m.group(0)[:60])
+    return hits
+
+
+def recommend_assignment_v2(
+    incident_number: str,
+    short_description: str,
+    description: str,
+    category: str = "",
+    subcategory: str = "",
+    comments_text: str = "",
+    work_notes_text: str = "",
+    current_group: str = "",
+    retrieval_index_path: str = "",
+    retrieval_top_k: int = 5,
+) -> dict:
+    """
+    Hybrid recommender that combines three signals deterministically:
+
+    1. **Hard rules** — `hard_rules` regex patterns run first; if any match, that
+       group wins immediately with confidence 0.95.
+    2. **Keyword scoring** — calls `recommend_assignment` (v1) for the substring +
+       boundary keyword score.
+    3. **Retrieval** — sentence-transformers kNN over the cached index; reports
+       top-1 neighbour, top-k list, and a weighted vote (sum-of-scores per group).
+
+    A final `recommended_group` is computed by combining the signals:
+      - hard_rules match → use it
+      - else if any L3-escalation signal hits AND keyword winner has an L3
+        counterpart in `l3_escalation.l2_to_l3` → use the L3 counterpart
+      - else if retrieval top-1 score >= 0.7 AND retrieval top-1 group is the
+        keyword winner OR retrieval top-1 group has 2+ neighbours in top_k →
+        use retrieval top-1
+      - else fall back to the keyword winner
+
+    The full signal dict is returned so the downstream LLM (Claude / Copilot)
+    can override the combined recommendation when it has reason to.
+    """
+    full_text = " ".join([
+        short_description or "",
+        description or "",
+        category or "",
+        subcategory or "",
+        comments_text or "",
+        work_notes_text or "",
+    ])
+
+    rules = _load_rules()
+    l3_map: dict[str, str] = rules.get("l3_escalation", {}).get("l2_to_l3", {})
+
+    # ── Signal 1: Hard rules ───────────────────────────────────────────────
+    hard_hit = _check_hard_rules(full_text)
+
+    # ── Signal 2: Keyword scoring (v1) ─────────────────────────────────────
+    kw_result = recommend_assignment(
+        incident_number=incident_number,
+        short_description=short_description,
+        description=description,
+        category=category,
+        subcategory=subcategory,
+        comments_text=comments_text,
+        work_notes_text=work_notes_text,
+        current_group=current_group,
+    )
+
+    # ── Signal 3: Retrieval (kNN) ──────────────────────────────────────────
+    retrieval_block: dict = {"available": False}
+    try:
+        from tools import retrieval_tool  # noqa: PLC0415
+        idx_path = retrieval_index_path
+        if not idx_path:
+            # Default sits next to this package
+            idx_path = str(Path(__file__).resolve().parent.parent / "retrieval_index.npz")
+        if Path(idx_path).exists():
+            neighbours = retrieval_tool.find_similar(
+                query_text=full_text,
+                top_k=retrieval_top_k,
+                index_path=idx_path,
+                exclude_number=incident_number,
+            )
+            if neighbours:
+                top1 = neighbours[0]
+                weighted_group, weighted_sum, weighted_tally = retrieval_tool.vote_group(
+                    neighbours, mode="weighted"
+                )
+                # Also count groups in top_k for the "2+ neighbours" heuristic
+                from collections import Counter  # noqa: PLC0415
+                group_counts = Counter([n["group"] for n in neighbours if n.get("group")])
+                retrieval_block = {
+                    "available": True,
+                    "top1": {
+                        "number": top1["number"],
+                        "group": top1["group"],
+                        "score": round(top1["score"], 3),
+                    },
+                    "neighbours": [
+                        {
+                            "number": n["number"],
+                            "group": n["group"],
+                            "score": round(n["score"], 3),
+                        }
+                        for n in neighbours
+                    ],
+                    "weighted_vote": {
+                        "group": weighted_group,
+                        "sum_of_scores": round(weighted_sum, 3),
+                        "tally": {k: round(v, 3) for k, v in weighted_tally.items()},
+                    },
+                    "group_counts": dict(group_counts),
+                }
+    except RuntimeError as e:
+        retrieval_block = {"available": False, "error": str(e)}
+    except Exception as e:
+        logger.warning(f"[ASSIGNMENT-V2] Retrieval error: {type(e).__name__}: {e}")
+        retrieval_block = {"available": False, "error": str(e)}
+
+    # ── L3 escalation check ────────────────────────────────────────────────
+    # Two text views: short text (short_description + description) is the
+    # canonical issue statement. Long text (full_text) includes work_notes
+    # and comments, which contain HISTORICAL routing attempts that may have
+    # been reverted — we treat those as weaker evidence.
+    short_text = " ".join([short_description or "", description or ""])
+    short_hits = _check_escalation_signals(short_text)
+    full_hits = _check_escalation_signals(full_text)
+    escalation_hits = full_hits  # full set is reported in `signals`
+
+    kw_winner = kw_result["recommended_group"]
+    escalated_to: Optional[str] = None
+
+    if escalation_hits:
+        l3_target_from_kw = l3_map.get(kw_winner)
+        # Conservative escalation rule — avoid second-guessing tickets that
+        # are ALREADY correctly placed in a canonical L2:
+        #
+        #   1. If short_description / description contain an escalation
+        #      signal → the canonical issue itself describes L3 work
+        #      → escalate.
+        #   2. Else if the ticket is NOT currently in the L2 we'd escalate
+        #      FROM (i.e. it sits somewhere else like B2C Hypercare or
+        #      already in an L3 group) → escalate.
+        #   3. Else (current_group equals kw_winner AND L3 signals appear
+        #      only in work_notes/comments) → DO NOT escalate. The L3
+        #      mentions are history from prior routing attempts; the L2
+        #      placement is the most recent human decision.
+        if l3_target_from_kw:
+            if short_hits or (current_group.strip() != kw_winner):
+                escalated_to = l3_target_from_kw
+        elif retrieval_block.get("available"):
+            r_top_group = retrieval_block["top1"]["group"]
+            l3_target_from_retrieval = l3_map.get(r_top_group)
+            if l3_target_from_retrieval and (
+                short_hits or current_group.strip() != r_top_group
+            ):
+                escalated_to = l3_target_from_retrieval
+
+    # ── Combine signals into a deterministic final recommendation ──────────
+    final_group: str
+    combined_confidence: float
+    combined_reason: str
+    source: str  # "hard_rule" | "l3_escalation" | "retrieval+keyword" | "retrieval_top1" | "keyword"
+
+    if hard_hit:
+        final_group = hard_hit["target"]
+        combined_confidence = 0.95
+        combined_reason = f"Hard rule matched: {hard_hit['reason']} (text: {hard_hit['matched_text']!r})"
+        source = "hard_rule"
+    elif escalated_to:
+        final_group = escalated_to
+        combined_confidence = 0.85
+        combined_reason = (
+            f"Escalated to L3 — L2 winner '{kw_winner}' has L3 counterpart '{escalated_to}' "
+            f"and escalation signals fired: {', '.join(escalation_hits[:3])}"
+        )
+        source = "l3_escalation"
+    elif retrieval_block.get("available"):
+        top1 = retrieval_block["top1"]
+        top1_score = top1["score"]
+        top1_group = top1["group"]
+        group_count_in_topk = retrieval_block["group_counts"].get(top1_group, 0)
+        kw_confidence = kw_result["confidence"]
+
+        # Retrieval-override rules — designed to be conservative so a small,
+        # noisy corpus can't override a confident keyword winner:
+        #
+        #   A. If retrieval top-1 group == keyword winner AND top-1 score >= 0.6
+        #      → both signals agree → high confidence in that group.
+        #   B. If keyword winner has confidence >= 0.4 AND retrieval disagrees
+        #      → trust the keyword scorer. The kNN corpus is small (one user's
+        #      active queue) and can drag tickets toward over-represented groups.
+        #   C. If keyword confidence < 0.4 (essentially a fallback) AND retrieval
+        #      top-1 score >= 0.7 AND >= 2 of top-5 share that group
+        #      → retrieval can override.
+        #   D. Else → keep keyword winner.
+        if top1_group == kw_winner and top1_score >= 0.6:
+            final_group = top1_group
+            combined_confidence = round(min(0.95, 0.5 + top1_score / 2), 3)
+            combined_reason = (
+                f"Retrieval top-1 ({top1['number']}, score {top1_score}) and keyword scorer "
+                f"agree on '{top1_group}'."
+            )
+            source = "retrieval+keyword"
+        elif (
+            kw_confidence < 0.4
+            and top1_score >= 0.7
+            and group_count_in_topk >= 2
+        ):
+            final_group = top1_group
+            combined_confidence = round(min(0.95, 0.5 + top1_score / 2), 3)
+            combined_reason = (
+                f"Keyword scorer was uncertain (conf {kw_confidence}). Retrieval top-1 "
+                f"score {top1_score} >= 0.7 and {group_count_in_topk} of top-5 neighbours "
+                f"share group '{top1_group}'."
+            )
+            source = "retrieval_top1"
+        else:
+            final_group = kw_winner
+            combined_confidence = kw_confidence
+            combined_reason = (
+                f"Keyword scorer chose '{kw_winner}' (conf {kw_confidence}). "
+                f"Retrieval top-1 was '{top1_group}' (score {top1_score}) — "
+                "insufficient to override keyword."
+            )
+            source = "keyword"
+    else:
+        final_group = kw_winner
+        combined_confidence = kw_result["confidence"]
+        combined_reason = kw_result["reason"] + " (retrieval index not available)"
+        source = "keyword"
+
+    reassignment_needed = bool(current_group and current_group.strip() != final_group)
+    reassignment_reason = (
+        f"Ticket is currently assigned to '{current_group}' but signals point to '{final_group}'."
+        if reassignment_needed
+        else ""
+    )
+
+    logger.info(
+        f"[ASSIGNMENT-V2] {incident_number} → {final_group} "
+        f"(source={source}, confidence={combined_confidence})"
+    )
+
+    return {
+        # Combined deterministic answer (LLM may override)
+        "recommended_group": final_group,
+        "confidence": combined_confidence,
+        "reason": combined_reason,
+        "source": source,
+        "reassignment_needed": reassignment_needed,
+        "reassignment_reason": reassignment_reason,
+        # Individual signals (for LLM-as-judge layer to weigh)
+        "signals": {
+            "hard_rule": hard_hit,  # None when no match
+            "keyword": {
+                "recommended_group": kw_winner,
+                "confidence": kw_result["confidence"],
+                "reason": kw_result["reason"],
+                "alternatives": kw_result["alternatives"],
+            },
+            "retrieval": retrieval_block,
+            "l3_escalation": {
+                "signals_matched": escalation_hits,
+                "escalated_from_to": (
+                    {"from": kw_winner, "to": escalated_to} if escalated_to else None
+                ),
+            },
+        },
+    }
