@@ -72,42 +72,50 @@ Call it when:
 - You want to cite specific historical tickets in your reasoning ("similar to INC10293500 which resolved in OMNISALES")
 - The user asks "what other tickets look like this one"
 
-## Report Format
+## Report Format — L'Oréal RCA Template (MANDATORY)
+
+Mirror the canonical RCA template used by `rca_copilot_agent`. The reassignment recommendation lands in `### WHAT WE NEED / DID`.
 
 ```markdown
 ## Assignment Analysis — {INCIDENT_NUMBER}
 
-**Incident:** {short_description}
-**Current Group:** {assignment_group from incident}
-**Recommended Group:** {your final choice — possibly different from `recommended_group` in the tool output if you have reason to override}
-**Confidence:** {your assessment, not necessarily the tool's}
-**Decision source:** {hard_rule | l3_escalation | retrieval+keyword | retrieval_top1 | keyword | low-confidence-flag}
+### WHAT HAPPENED
+{One sentence stating what was reported and where the ticket currently sits — symptom, not cause.}
+Example: "Ticket reports SAP order failure for MY/KIE customer; currently assigned to APAC - ZN - O+O.OPERATIONS - L2."
 
-### How the three signals lined up
-- **Hard rules:** {matched / null}
-- **Keyword scorer:** {group} (confidence X, matched: kw1, kw2)
-- **Retrieval top-1:** INC{nnnnnn} → {group} (similarity 0.XX)
-- **Retrieval weighted vote:** {group: sum, ...}
-- **L3 escalation:** {triggered / not — list matched signals}
+### WHAT WE CHECKED
+→ Hard rules — {matched: rule name + target group / no match}
+→ Keyword scorer — {group} (confidence {0.0-1.0}, matched: {kw1, kw2, ...} / no match)
+→ kNN retrieval (top-1) — INC{nnnnnn} → {group} (similarity {0.00-1.00})
+→ kNN retrieval (weighted vote) — {group: sum, group: sum, ...}
+→ L3 escalation signals — {triggered: signal1, signal2, ... / not triggered}
 
-### My reasoning
-{1-3 sentences. Why this group? Which signals agreed? Why I chose to override (if I did)?}
+### WHAT WE FOUND
+{One or two sentences. Which signals agreed? Which disagreed? What does the evidence point to overall?}
+Example: "Hard rule `[MARS-ANZ]` matched explicitly and three of the top-5 nearest neighbours also sit in OMNISALES.RETAIL — both signals point to that L2 group as the correct owner."
 
-### Reassignment Decision
-{If your final choice ≠ current_group:}
-**REASSIGNMENT NEEDED**
-Reason: {reassignment_reason}
-Action: Please reassign this ticket to "{your final choice}".
+### WHAT WE NEED / DID
+{If the final choice ≠ current_group:}
+**REASSIGN to:** `{your final group choice}`
+**Confidence:** {0-100 %}
+**Justification:** {Why this group is correct — name the signals that led here, cite specific keywords / similar tickets / hard rules. If you overrode the tool's combined recommendation, explain why.}
+**Action:** Please reassign this ticket to `{group}` and add the justification above as a public comment.
 
 {Else:}
-**NO REASSIGNMENT NEEDED**
-The current assignment group is correct.
+**NO REASSIGNMENT NEEDED.** The current assignment group `{current_group}` matches what the routing signals indicate. {One-sentence supporting evidence.}
 
-### Similar past tickets
-{Cite the top-3 from retrieval if it informed your reasoning, e.g.}
+{Optional: cite up to 3 most-similar past tickets that informed the recommendation.}
+**Similar past tickets:**
 - INC10293500 (similarity 0.72) — currently in OMNISALES.RETAIL
 - INC10204372 (similarity 0.65) — currently in B2C Hypercare
+- INC10324255 (similarity 0.58) — currently in SAPMENA L3
 ```
+
+### Why this format
+
+- Matches the wording L'Oréal L2/L3 operators already use in SNOW work-notes, so the agent's output reads natively
+- Placing the recommendation in `### WHAT WE NEED / DID` reflects the canonical "action items" semantics — reassignment is an action item, not a header field
+- The four `→ Checked` lines explicitly enumerate the four signals from `recommend_assignment_v2`, making the reasoning auditable
 
 ## Assignment Groups Supported
 

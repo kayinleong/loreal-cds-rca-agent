@@ -167,38 +167,47 @@ python ticketasg_copilot_agent/run_tool.py find_similar_incidents --json '{
 }'
 ```
 
-### Step 5 — Write the assignment analysis report
+### Step 5 — Write the assignment analysis report (L'Oréal RCA template)
 
-Use this format:
+Use the canonical RCA template — same four sections L'Oréal L2/L3 operators write in
+real SNOW work-notes. The reassignment recommendation lands in `### WHAT WE NEED / DID`.
 
 ```markdown
 ## Assignment Analysis — {INCIDENT_NUMBER}
 
-**Incident:** {short_description}
-**Current Group:** {current assignment_group}
-**Recommended Group:** {recommended_group}
-**Confidence:** {confidence as percentage, e.g. 73%}
+### WHAT HAPPENED
+{One sentence stating what was reported and where the ticket currently sits — symptom, not cause.}
 
-### Routing Signals
-{Explain which keywords or patterns triggered the recommendation}
+### WHAT WE CHECKED
+→ Hard rules — {matched: rule + target group / no match}
+→ Keyword scorer — {group} (confidence {0.0-1.0}, matched: {kw1, kw2, ...} / no match)
+→ kNN retrieval (top-1) — INC{nnnnnn} → {group} (similarity {0.00-1.00})
+→ kNN retrieval (weighted vote) — {group: sum, group: sum, ...}
+→ L3 escalation signals — {triggered: signal1, signal2, ... / not triggered}
 
-### Reassignment Decision
+### WHAT WE FOUND
+{One or two sentences. Which signals agreed, which disagreed, what does the evidence point to overall?}
+
+### WHAT WE NEED / DID
 {If reassignment_needed is True:}
-**REASSIGNMENT NEEDED**
-Reason: {reassignment_reason}
-Action: Please reassign this ticket to "{recommended_group}".
+**REASSIGN to:** `{your final group choice}`
+**Confidence:** {0-100 %}
+**Justification:** {Name the signals that led here. Cite specific keywords / similar tickets / hard rules. If you overrode the combined recommendation, explain why.}
+**Action:** Please reassign this ticket to `{group}` and post the justification above as a public comment.
 
 {If reassignment_needed is False:}
-**NO REASSIGNMENT NEEDED**
-The current assignment group is correct.
+**NO REASSIGNMENT NEEDED.** The current group `{current_group}` matches what the routing signals indicate. {One-sentence supporting evidence.}
 
-### Alternative Groups
-| Group | Score |
-|-------|-------|
-| {alt1.group} | {alt1.score} |
-| {alt2.group} | {alt2.score} |
-| {alt3.group} | {alt3.score} |
+{Optional — cite up to 3 most-similar past tickets that informed the call:}
+**Similar past tickets:**
+- INC{nnnnnn} (similarity 0.XX) — currently in {group}
+- INC{nnnnnn} (similarity 0.XX) — currently in {group}
 ```
+
+**Important — what goes WHERE:**
+- The recommended group + justification + reassignment action ALL go in `### WHAT WE NEED / DID`. Do not duplicate them in a top-level field.
+- `### WHAT WE CHECKED` enumerates the four `signals` from `recommend_assignment_v2`'s output — one bullet per signal, with the actual matched values.
+- Do not add extra sections. Stick to the four `###` headers above.
 
 ### Step 6 — Save report (MANDATORY)
 
