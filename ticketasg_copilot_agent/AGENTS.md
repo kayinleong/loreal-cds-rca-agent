@@ -117,6 +117,42 @@ Example: "Hard rule `[MARS-ANZ]` matched explicitly and three of the top-5 neare
 - Placing the recommendation in `### WHAT WE NEED / DID` reflects the canonical "action items" semantics — reassignment is an action item, not a header field
 - The four `→ Checked` lines explicitly enumerate the four signals from `recommend_assignment_v2`, making the reasoning auditable
 
+### Rule: FULL canonical assignment-group names — never shortforms
+
+When the report references a SNOW assignment group (the recommendation in `### WHAT WE NEED / DID`, evidence in `### WHAT WE CHECKED`, similar tickets, etc.), **always write the verbatim canonical group name as it appears in ServiceNow.** Never use operator shortforms (`CDS L3`, `LOY`, `MARS team`, `iBeauty`, `NGL`, etc.) — they're ambiguous outside the team and they don't match the SNOW Reassign-Group picker.
+
+Example:
+- ✓ "**REASSIGN to:** `APAC - SGP - SPACE CDS SAPMENA L3 Support`"
+- ✗ "**REASSIGN to:** CDS L3 team"
+
+Use this shortform → canonical mapping to translate work-note shorthand to the full SNOW group name:
+
+| Shorthand seen in work-notes | Full canonical SNOW group |
+|---|---|
+| `CDS L2`, `CDS L2 team`, `SAPMENA CDS group` | `APAC - SGP - SPACE CDS SAPMENA L2 Support` |
+| `CDS L3`, `CDS L3 team` | `APAC - SGP - SPACE CDS SAPMENA L3 Support` |
+| `LOY`, `LOY team`, `Loyalty`, `Loyalty team` (loyalty backend) | `APAC - ZN - O+O.NGLORA - L2` |
+| `LOY L3`, `Loyalty L3` | `APAC - CHN - SPACE Loyalty L3 Support` |
+| `MARS`, `MARS team`, `MARS Ops`, `MARS Operations`, `retail Ops team` | `APAC - ZN - O+O OMNISALES.RETAIL - CAPGEMINI-GDC-MARS - RUN - L2` |
+| `iBeauty`, `iBeauty team`, `IBeauty team`, `iBeauty L2` | `APAC - ZN - iBeauty 2.0 - Retail - L2` |
+| `SFCC`, `SFCC L2` | `APAC - ZN - O+O ONLINE.CED - CAPGEMINI-GDC-SPACE-GDS - RUN - L2` |
+| `CRM`, `SFMC team`, `SFDC team`, `CE team`, `CE Ops team` | `APAC - ZN - O+O.CRM - L2` |
+| `NGL`, `NGL L2`, `NGLORA` | `APAC - ZN - O+O.NGLORA - L2` |
+| `Operations`, `Ops`, `OPS team` (only when no more specific match) | `APAC - ZN - O+O.OPERATIONS - L2` |
+| `Hypercare`, `Hypercare team`, `Hypercare group`, `LS team`, `LS Hypercare`, `Aesop hypercare` | `APAC - ZN - SPACE B2C Hypercare` |
+| `HIP`, `HIP team`, `Infrastructure team`, `Azure team` (HIP-adjacent) | `TECH FNDN - WW - HIP INCIDENT L2` |
+| `THN Retail`, `Thailand Retail` | `APAC - THN - Retail IT` |
+
+L3 / specialised groups that appear in real work-notes (also use full names):
+- `APAC - SGP - SPACE CDS SAPMENA L3 Support`
+- `APAC - CHN - SPACE Loyalty L3 Support`
+- `APAC - SGP - SPACE Loyalty L3 Support`
+- `INFRA - WW - Linux Unix ACN - L3`
+
+If the right canonical group is uncertain, pick the closest match and add `[USER-CONFIRM]` after it in the report so the reviewer knows to verify.
+
+When citing **Similar past tickets** in `### WHAT WE NEED / DID`, also use the full canonical group name (`currently in APAC - SGP - SPACE CDS SAPMENA L3 Support`, not `currently in SGP - SPACE CDS SAPMENA L3 Support`).
+
 ## Assignment Groups Supported
 
 [USER-CONFIRM] Routing keywords are inferred — verify against SharePoint matrix before production use.

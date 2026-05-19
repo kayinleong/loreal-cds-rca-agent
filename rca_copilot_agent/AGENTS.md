@@ -240,6 +240,40 @@ Interpret results:
 {action items with owners and deadlines}
 ```
 
+### Rule: Always use FULL canonical assignment-group names
+
+When the report names a SNOW assignment group anywhere (action items in `WHAT WE NEED / DID`, evidence in `WHAT WE CHECKED`, etc.), **always write the verbatim canonical group name as it appears in ServiceNow.** Never use operator shortforms (`CDS L3`, `LOY`, `MARS team`, `iBeauty`, `NGL`, etc.) — they're ambiguous outside the team and they don't match the SNOW Reassign-Group picker.
+
+Example:
+- ✓ "Assign to `APAC - SGP - SPACE CDS SAPMENA L3 Support` as the issue is tracked in DFCT0268807."
+- ✗ "Assign to CDS L3 team as the issue is tracked in DFCT0268807."
+
+Shortform → canonical mapping (use this table when a work-note says e.g. "LOY" and you must translate it for the report):
+
+| Shorthand seen in work-notes | Full canonical SNOW group |
+|---|---|
+| `CDS L2`, `CDS L2 team`, `SAPMENA CDS group` | `APAC - SGP - SPACE CDS SAPMENA L2 Support` |
+| `CDS L3`, `CDS L3 team` | `APAC - SGP - SPACE CDS SAPMENA L3 Support` |
+| `LOY`, `LOY team`, `Loyalty`, `Loyalty team` (loyalty backend) | `APAC - ZN - O+O.NGLORA - L2` |
+| `LOY L3`, `Loyalty L3` | `APAC - CHN - SPACE Loyalty L3 Support` |
+| `MARS`, `MARS team`, `MARS Ops`, `MARS Operations`, `retail Ops team` | `APAC - ZN - O+O OMNISALES.RETAIL - CAPGEMINI-GDC-MARS - RUN - L2` |
+| `iBeauty`, `iBeauty team`, `IBeauty team`, `iBeauty L2` | `APAC - ZN - iBeauty 2.0 - Retail - L2` |
+| `SFCC`, `SFCC L2` | `APAC - ZN - O+O ONLINE.CED - CAPGEMINI-GDC-SPACE-GDS - RUN - L2` |
+| `CRM`, `SFMC team`, `SFDC team`, `CE team`, `CE Ops team` | `APAC - ZN - O+O.CRM - L2` |
+| `NGL`, `NGL L2`, `NGLORA` | `APAC - ZN - O+O.NGLORA - L2` |
+| `Operations`, `Ops`, `OPS team` (only when no more specific match) | `APAC - ZN - O+O.OPERATIONS - L2` |
+| `Hypercare`, `Hypercare team`, `Hypercare group`, `LS team`, `LS Hypercare`, `Aesop hypercare` | `APAC - ZN - SPACE B2C Hypercare` |
+| `HIP`, `HIP team`, `Infrastructure team`, `Azure team` (HIP-adjacent) | `TECH FNDN - WW - HIP INCIDENT L2` |
+| `THN Retail`, `Thailand Retail` | `APAC - THN - Retail IT` |
+
+L3 / specialised groups that appear in real work-notes (also use full names — never the shorthand):
+- `APAC - SGP - SPACE CDS SAPMENA L3 Support`
+- `APAC - CHN - SPACE Loyalty L3 Support`
+- `APAC - SGP - SPACE Loyalty L3 Support`
+- `INFRA - WW - Linux Unix ACN - L3`
+
+If the right canonical group is uncertain, pick the closest match and add `[USER-CONFIRM]` next to it in the report so the reviewer knows to verify.
+
 ## Common SPACE CDS Root Causes
 
 ### B2C

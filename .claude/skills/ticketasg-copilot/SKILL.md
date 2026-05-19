@@ -209,6 +209,39 @@ real SNOW work-notes. The reassignment recommendation lands in `### WHAT WE NEED
 - `### WHAT WE CHECKED` enumerates the four `signals` from `recommend_assignment_v2`'s output — one bullet per signal, with the actual matched values.
 - Do not add extra sections. Stick to the four `###` headers above.
 
+**Rule: FULL canonical assignment-group names — never shortforms**
+
+Every group reference in the report — the recommendation in `### WHAT WE NEED / DID`, the kNN top-1 line in `### WHAT WE CHECKED`, the keyword-scorer line, the "Similar past tickets" list — uses the **verbatim canonical SNOW group name**. Never use operator shortforms (`CDS L3`, `LOY`, `MARS team`, `iBeauty`, `NGL`, etc.).
+
+- ✓ `**REASSIGN to:** \`APAC - SGP - SPACE CDS SAPMENA L3 Support\``
+- ✗ `**REASSIGN to:** CDS L3 team`
+
+Shortform → canonical mapping:
+
+| Shorthand seen in work-notes | Full canonical SNOW group |
+|---|---|
+| `CDS L2`, `CDS L2 team`, `SAPMENA CDS group` | `APAC - SGP - SPACE CDS SAPMENA L2 Support` |
+| `CDS L3`, `CDS L3 team` | `APAC - SGP - SPACE CDS SAPMENA L3 Support` |
+| `LOY`, `LOY team`, `Loyalty`, `Loyalty team` (loyalty backend) | `APAC - ZN - O+O.NGLORA - L2` |
+| `LOY L3`, `Loyalty L3` | `APAC - CHN - SPACE Loyalty L3 Support` |
+| `MARS`, `MARS team`, `MARS Ops`, `MARS Operations`, `retail Ops team` | `APAC - ZN - O+O OMNISALES.RETAIL - CAPGEMINI-GDC-MARS - RUN - L2` |
+| `iBeauty`, `iBeauty team`, `IBeauty team`, `iBeauty L2` | `APAC - ZN - iBeauty 2.0 - Retail - L2` |
+| `SFCC`, `SFCC L2` | `APAC - ZN - O+O ONLINE.CED - CAPGEMINI-GDC-SPACE-GDS - RUN - L2` |
+| `CRM`, `SFMC team`, `SFDC team`, `CE team`, `CE Ops team` | `APAC - ZN - O+O.CRM - L2` |
+| `NGL`, `NGL L2`, `NGLORA` | `APAC - ZN - O+O.NGLORA - L2` |
+| `Operations`, `Ops`, `OPS team` (only when no more specific match) | `APAC - ZN - O+O.OPERATIONS - L2` |
+| `Hypercare`, `Hypercare team`, `Hypercare group`, `LS team`, `LS Hypercare`, `Aesop hypercare` | `APAC - ZN - SPACE B2C Hypercare` |
+| `HIP`, `HIP team`, `Infrastructure team`, `Azure team` (HIP-adjacent) | `TECH FNDN - WW - HIP INCIDENT L2` |
+| `THN Retail`, `Thailand Retail` | `APAC - THN - Retail IT` |
+
+L3 / specialised groups (also full names):
+- `APAC - SGP - SPACE CDS SAPMENA L3 Support`
+- `APAC - CHN - SPACE Loyalty L3 Support`
+- `APAC - SGP - SPACE Loyalty L3 Support`
+- `INFRA - WW - Linux Unix ACN - L3`
+
+If uncertain, pick the closest canonical match and append `[USER-CONFIRM]` to flag it for reviewer verification.
+
 ### Step 6 — Save report (MANDATORY)
 
 ```bash
