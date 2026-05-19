@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -69,43 +70,53 @@ def _builtin_defaults() -> dict:
         "version": "builtin-fallback",
         "groups": {
             "APAC - SGP - SPACE CDS SAPMENA L2 Support": {
-                "keywords": ["SAP", "SAPMENA", "SGP", "Singapore", "pipeline", "CDS"],
+                "keywords": ["SAP", "SAPMENA", "Singapore", "CDS", "ERP"],
+                "boundary_keywords": ["CDS", "SGP"],
                 "weight": 1.0,
             },
             "APAC - THN - Retail IT": {
-                "keywords": ["Thailand", "THN", "POS", "retail store", "printer"],
+                "keywords": ["Thailand retail"],
+                "boundary_keywords": ["THN"],
                 "weight": 1.0,
             },
             "APAC - ZN - iBeauty 2.0 - Retail - L2": {
-                "keywords": ["iBeauty", "beauty advisor"],
+                "keywords": ["iBeauty 2.0", "Beauty Advisor"],
+                "boundary_keywords": ["BA"],
                 "weight": 1.0,
             },
             "APAC - ZN - O+O OMNISALES.RETAIL - CAPGEMINI-GDC-MARS - RUN - L2": {
-                "keywords": ["OMNISALES", "MARS", "Capgemini"],
+                "keywords": ["OMNISALES", "MARS Ops", "retail Ops team"],
+                "boundary_keywords": [],
                 "weight": 1.0,
             },
             "APAC - ZN - O+O ONLINE.CED - CAPGEMINI-GDC-SPACE-GDS - RUN - L2": {
-                "keywords": ["CED", "e-commerce", "online"],
+                "keywords": ["SFCC", "EBTQ", "Arvato"],
+                "boundary_keywords": ["CED"],
                 "weight": 1.0,
             },
             "APAC - ZN - O+O.CRM - L2": {
-                "keywords": ["CRM", "loyalty", "consumer profile"],
+                "keywords": ["SFMC", "SFDC", "CRM001", "consent", "GDPR"],
+                "boundary_keywords": [],
                 "weight": 1.0,
             },
             "APAC - ZN - O+O.NGLORA - L2": {
-                "keywords": ["NGLORA", "LORA"],
+                "keywords": ["Rule-500", "points redemption"],
+                "boundary_keywords": ["NGL", "NGLORA"],
                 "weight": 1.0,
             },
             "APAC - ZN - O+O.OPERATIONS - L2": {
-                "keywords": ["operations", "ETL", "pipeline"],
+                "keywords": ["data pipeline failure", "ETL job"],
+                "boundary_keywords": [],
                 "weight": 1.0,
             },
             "APAC - ZN - SPACE B2C Hypercare": {
-                "keywords": ["B2C", "hypercare", "go-live"],
+                "keywords": ["hypercare", "B2C", "go live", "go-live", "launch", "LS team"],
+                "boundary_keywords": ["LS"],
                 "weight": 1.0,
             },
             "TECH FNDN - WW - HIP INCIDENT L2": {
-                "keywords": ["HIP", "infrastructure", "network"],
+                "keywords": ["HIP", "infrastructure", "CloudSQL", "Cloudflare"],
+                "boundary_keywords": ["HIP", "SSO", "SSL"],
                 "weight": 1.0,
             },
         },
@@ -129,12 +140,18 @@ def get_assignment_rules() -> str:
     for group_name in ASSIGNMENT_GROUPS:
         g = groups_dict.get(group_name, {})
         keywords = g.get("keywords", [])
+        boundary_keywords = g.get("boundary_keywords", [])
         description = g.get("description", "")
+        evidence_status = g.get("evidence_status", "")
         lines.append(f"  {group_name}")
+        if evidence_status:
+            lines.append(f"    Evidence: {evidence_status}")
         if description:
             lines.append(f"    Description: {description}")
         if keywords:
-            lines.append(f"    Keywords: {', '.join(keywords)}")
+            lines.append(f"    Keywords (substring): {', '.join(keywords)}")
+        if boundary_keywords:
+            lines.append(f"    Keywords (word-boundary): {', '.join(boundary_keywords)}")
         lines.append("")
     return "\n".join(lines)
 
@@ -190,9 +207,21 @@ def recommend_assignment(
     for group_name in ASSIGNMENT_GROUPS:
         g = groups_dict.get(group_name, {})
         keywords: list[str] = g.get("keywords", [])
+        boundary_keywords: list[str] = g.get("boundary_keywords", [])
         weight: float = float(g.get("weight", 1.0))
-        # Collect unique matching keywords (case-insensitive)
-        hits = list({kw for kw in keywords if kw.lower() in full_text})
+        # Substring matches — case-insensitive, anywhere in text
+        substring_hits = {kw for kw in keywords if kw.lower() in full_text}
+        # Word-boundary matches — case-insensitive regex on full_text, with re.escape
+        # so callers don't have to worry about regex metacharacters in their keywords
+        boundary_hits: set[str] = set()
+        for kw in boundary_keywords:
+            if not kw:
+                continue
+            pattern = re.compile(r"\b" + re.escape(kw) + r"\b", re.IGNORECASE)
+            if pattern.search(full_text):
+                boundary_hits.add(kw)
+        # Union: unique keyword strings across both buckets
+        hits = list(substring_hits | boundary_hits)
         score = len(hits) * weight
         scores[group_name] = score
         hit_keywords[group_name] = hits

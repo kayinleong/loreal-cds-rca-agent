@@ -1,55 +1,207 @@
 {
-  "version": "1.0",
-  "note": "[USER-CONFIRM] Routing matrix for SPACE CDS L2 assignment groups. Keywords are inferred — verify against SharePoint routing matrix before production use. Update keywords here — no code changes needed.",
+  "version": "1.1",
+  "note": "[EVIDENCE-BASED v1.1] Routing matrix for SPACE CDS L2 assignment groups. Keywords for SAPMENA L2 + B2C Hypercare validated against the 64-incident sample from quick-kayinleong-018. Remaining 8 groups still [USER-CONFIRM] — wider SNOW fetch needed. `boundary_keywords` are matched only on word boundaries (regex \\b…\\b, case-insensitive) — use this for short or ambiguous tokens (BA, NGL, LS) that cause substring false positives.",
   "groups": {
     "APAC - SGP - SPACE CDS SAPMENA L2 Support": {
-      "keywords": ["SAP", "SAPMENA", "SGP", "Singapore", "pipeline", "CDS", "SPACE CDS", "SAP order", "product sync", "ERP"],
-      "description": "SAP/ERP integration issues; Singapore-hosted SPACE CDS services; product data sync failures",
+      "evidence_status": "EVIDENCE-BASED",
+      "description": "SAP/ERP integration; Singapore-hosted SPACE CDS; SAPMENA pipeline; SFCC -> CDS exchanges; API failures (FindConsumerProfile, GetCustomerById, GetPurchaseV2); E2E Monitoring alerts; Outbound Gap Data tickets; staging-table SQL errors.",
+      "keywords": [
+        "SAP",
+        "SAPMENA",
+        "ERP",
+        "Singapore",
+        "CDS",
+        "FindConsumerProfile",
+        "GetCustomerById",
+        "GetPurchaseV2",
+        "GetCalculatedAttributes",
+        "POST Customer",
+        "Outbound Gap",
+        "Outbound Gap Data",
+        "E2E Monitoring",
+        "E2E monitoring",
+        "stg_sap_",
+        "SFCC -> CDS",
+        "SFMC Prospect",
+        "Prospect Ingestion",
+        "consumer registration",
+        "CDS Consumer Registration"
+      ],
+      "boundary_keywords": [
+        "CDS",
+        "SGP"
+      ],
       "weight": 1.0
     },
     "APAC - THN - Retail IT": {
-      "keywords": ["Thailand", "THN", "POS", "point of sale", "retail store", "in-store", "cashier", "terminal", "store network", "printer"],
-      "description": "Thailand retail IT, in-store POS systems, store network issues",
+      "evidence_status": "USER-CONFIRM",
+      "description": "[USER-CONFIRM] Thailand retail IT — in-store POS systems and store network. NO incidents in the quick-018 sample; keywords are inferred from the group name. Validate against a wider SNOW fetch before relying on this rule.",
+      "keywords": [
+        "Thailand retail",
+        "retail store network"
+      ],
+      "boundary_keywords": [
+        "THN"
+      ],
       "weight": 1.0
     },
     "APAC - ZN - iBeauty 2.0 - Retail - L2": {
-      "keywords": ["iBeauty", "beauty advisor", "BA", "in-store app", "clienteling", "advisor app", "consultation", "skin", "shade", "retail app"],
-      "description": "iBeauty POS application issues, in-store retail app",
+      "evidence_status": "USER-CONFIRM",
+      "description": "[USER-CONFIRM] iBeauty 2.0 retail app. iBeauty issues in the quick-018 sample landed in SAPMENA L2/L3 or B2C Hypercare, NOT in this group — so the keywords are validated as unique to *this* L2 only if/when an iBeauty 2.0 ticket actually sits here. `BA` is matched on word boundary to avoid substring traps (e.g. matching `based`, `above`).",
+      "keywords": [
+        "iBeauty 2.0",
+        "Beauty Advisor",
+        "advisor app",
+        "in-store app",
+        "clienteling",
+        "retail app"
+      ],
+      "boundary_keywords": [
+        "BA"
+      ],
       "weight": 1.0
     },
     "APAC - ZN - O+O OMNISALES.RETAIL - CAPGEMINI-GDC-MARS - RUN - L2": {
-      "keywords": ["OMNISALES", "omni", "MARS", "Capgemini", "GDC", "click and collect", "ship from store", "inventory", "retail order", "MARS integration"],
-      "description": "Omnichannel retail operations (Capgemini MARS team)",
+      "evidence_status": "USER-CONFIRM",
+      "description": "[USER-CONFIRM] Omnichannel retail (Capgemini MARS team). Removed `MARS`, `Capgemini`, `omni`, `GDC` from quick-018 v1.0 — those terms had 100 % drift (47 / 30 / 2 / 1 hits, all in other groups). Kept only the most group-specific phrases. Real reassignment notes use `retail Ops team` and `MARS Ops` — added.",
+      "keywords": [
+        "OMNISALES",
+        "click and collect",
+        "ship from store",
+        "MARS Ops",
+        "retail Ops team",
+        "MARS-ANZ",
+        "MARS-SG",
+        "MARS-MY",
+        "MARS-TH",
+        "MARS-VN",
+        "MARS-ID",
+        "salesrep",
+        "sales representative",
+        "MARS integration"
+      ],
+      "boundary_keywords": [],
       "weight": 1.0
     },
     "APAC - ZN - O+O ONLINE.CED - CAPGEMINI-GDC-SPACE-GDS - RUN - L2": {
-      "keywords": ["CED", "e-commerce", "online", "web order", "cart", "checkout", "SPACE GDS", "online store", "SPACE-GDS"],
-      "description": "Online e-commerce platform issues (Capgemini SPACE GDS team)",
+      "evidence_status": "USER-CONFIRM",
+      "description": "[USER-CONFIRM] Online e-commerce (Capgemini SPACE GDS team). Added SFCC (Salesforce Commerce Cloud — explicit reassignment target in INC10442394), EBTQ (E-Boutique registration channel), Arvato (3PL endpoint — appeared in INC10466356). Removed `e-commerce`, `web order`, `cart`, `checkout`, `online store`, `SPACE-GDS` (all 0 hits in 64-ticket sample).",
+      "keywords": [
+        "SFCC",
+        "Salesforce Commerce",
+        "EBTQ",
+        "E-Boutique",
+        "Arvato",
+        "online order",
+        "web checkout",
+        "CED ",
+        "SPACE GDS"
+      ],
+      "boundary_keywords": [
+        "CED"
+      ],
       "weight": 1.0
     },
     "APAC - ZN - O+O.CRM - L2": {
-      "keywords": ["CRM", "loyalty", "consumer profile", "lucid", "registration", "account", "consent", "GDPR", "Salesforce", "marketing", "email campaign"],
-      "description": "CRM, consumer identity, loyalty programme issues",
+      "evidence_status": "USER-CONFIRM",
+      "description": "[USER-CONFIRM] CRM / consumer identity / Salesforce platform. The quick-018 sample exposed that the v1.0 CRM rule was the WORST false-positive driver: 4 of its 6 keywords (`lucid`, `CRM`, `loyalty`, `account`) hit universal nouns and matched 28-37 incidents each — 100 % in OTHER groups. Removed those four. Added evidence-backed signals from the sample: SFMC Prospect (INC10475182, INC10483228), SFDC (INC10466783), CRM001 file outbound (INC10142664). Kept only consent / GDPR (specific legal-data signals).",
+      "keywords": [
+        "SFMC",
+        "Salesforce Marketing",
+        "SFDC",
+        "Salesforce Data",
+        "CRM001",
+        "CRM file",
+        "Campaigns table",
+        "email campaign",
+        "CE team",
+        "CE Ops team",
+        "consumer profile data",
+        "consent",
+        "GDPR"
+      ],
+      "boundary_keywords": [],
       "weight": 1.0
     },
     "APAC - ZN - O+O.NGLORA - L2": {
-      "keywords": ["NGLORA", "LORA", "ORA", "loyalty rewards", "points", "tier", "redemption", "rewards programme"],
-      "description": "NGLORA loyalty platform issues",
+      "evidence_status": "USER-CONFIRM",
+      "description": "[USER-CONFIRM] NGLORA loyalty platform. v1.0 had `NGLORA`, `LORA`, `ORA` — `NGLORA` and `LORA` had 0 hits, and `ORA` had 8 substring matches all in wrong groups (matches `respective`, `operations`, etc). Real text uses `NGL` (which needs word-boundary or it matches `nigella`, etc.). Real handoff: 'Assigning to NGL L2' (INC10442394). Added `Rule-500` (NGLORA rule engine alert, INC10403825), `loyalty rewards programme`.",
+      "keywords": [
+        "Rule-500",
+        "subscription points",
+        "points redemption",
+        "points credit",
+        "rewards programme",
+        "loyalty rewards",
+        "tier upgrade"
+      ],
+      "boundary_keywords": [
+        "NGL",
+        "NGLORA",
+        "LORA",
+        "ORA"
+      ],
       "weight": 1.0
     },
     "APAC - ZN - O+O.OPERATIONS - L2": {
-      "keywords": ["operations", "ops", "batch", "ETL", "pipeline", "data sync", "integration", "API", "webhook", "data ingestion"],
-      "description": "Operational issues: ETL, API integrations, data pipelines",
+      "evidence_status": "USER-CONFIRM",
+      "description": "[USER-CONFIRM] Operational issues — ETL, API, data pipelines. The quick-018 sample showed every v1.0 keyword (API, batch, ETL, pipeline, integration, ops, operations) had 100 % drift — they're universal in this domain. Kept ONLY the most operations-specific multi-word phrases. This group is intended as the silent fallback when no other group scores hits; relying on single-word matches was the bug.",
+      "keywords": [
+        "data pipeline failure",
+        "ETL job",
+        "scheduled batch",
+        "pipeline failure",
+        "data ingestion job",
+        "webhook integration"
+      ],
+      "boundary_keywords": [],
       "weight": 1.0
     },
     "APAC - ZN - SPACE B2C Hypercare": {
-      "keywords": ["hypercare", "go live", "go-live", "launch", "cutover", "P1", "escalation", "new market", "B2C", "regression", "critical"],
-      "description": "Post-go-live hypercare support for new market launches",
+      "evidence_status": "EVIDENCE-BASED",
+      "description": "Post-go-live hypercare for new market launches. Validated against the 64-incident sample (19 incidents). `hypercare` alone hit 12 times with 8 in own group (drift 0.33 — the best-performing keyword in the dataset). `B2C` hit 13/5 (drift 0.62). Removed `P1`, `escalation`, `new market`, `regression`, `cutover` (all 0 hits). Added `LS team` and `LS Hypercare` — these are recurring reassignment destinations in real work-notes.",
+      "keywords": [
+        "hypercare",
+        "Hypercare group",
+        "go live",
+        "go-live",
+        "launch",
+        "B2C",
+        "LS team",
+        "LS Hypercare",
+        "Hypercare team",
+        "Aesop hypercare"
+      ],
+      "boundary_keywords": [
+        "LS"
+      ],
       "weight": 1.0
     },
     "TECH FNDN - WW - HIP INCIDENT L2": {
-      "keywords": ["infrastructure", "HIP", "platform", "cloud", "server", "network", "certificate", "SSL", "DNS", "database", "auth", "SSO"],
-      "description": "Technical foundation: infrastructure, cloud platform, certificates",
+      "evidence_status": "USER-CONFIRM",
+      "description": "[USER-CONFIRM] Technical foundation — infrastructure, cloud, certificates. HIP group had 0 tickets in the quick-018 sample, so drift cannot be measured. Kept domain-specific tokens, removed `network`, `DNS`, `certificate` (0 hits). Added concrete signals from the sample: `CloudSQL` (INC10450026), `Replica` (INC10450026), `Linux Host`, `FS /mnt`, `disk usage`, `Cloudflare`/`Cloudfare` (INC10466356 — note 3rd-party 3PL spelling variant), `Azure`.",
+      "keywords": [
+        "HIP",
+        "infrastructure",
+        "platform",
+        "CloudSQL",
+        "Replica",
+        "Linux Host",
+        "FS /mnt",
+        "disk usage",
+        "FS usage",
+        "Cloudflare",
+        "Cloudfare",
+        "Azure",
+        "SSL certificate",
+        "auth failure",
+        "SSO"
+      ],
+      "boundary_keywords": [
+        "HIP",
+        "SSO",
+        "SSL"
+      ],
       "weight": 1.0
     }
   }
