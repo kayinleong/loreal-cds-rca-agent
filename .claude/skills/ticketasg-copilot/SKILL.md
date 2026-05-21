@@ -1,10 +1,11 @@
 ---
 name: Ticket Assignment Copilot Agent
 description: >
-  Ticket assignment routing agent for L'Oréal SPACE CDS ServiceNow incidents.
-  Analyses incident comments, work notes, and descriptions to recommend the correct
-  L2 assignment group from a list of 10 supported groups.
-  States reassignment reason when the current group is wrong.
+  RCA + ticket assignment routing agent for L'Oréal SPACE CDS ServiceNow incidents.
+  Produces the same RCA report as rca_copilot_agent (### WHAT HAPPENED / WHAT WE CHECKED /
+  WHAT WE FOUND / WHAT WE NEED / DID), with an additional ### REASSIGNMENT DECISION
+  section appended as the LAST section. Applies the CDS Incident Handling Guidebook
+  rules (3-question framework, migrated-vs-ongoing logic, common patterns).
   Uses run_tool.py CLI — no MCP server required.
 invocation: /ticketasg-copilot
 tools:
@@ -37,6 +38,11 @@ python ticketasg_copilot_agent/run_tool.py <tool_name> --json '<JSON args>'
 | Fetch from SNOW URL | `run_tool.py fetch_incidents --json '{"list_url": "..."}'` |
 | Fetch single incident | `run_tool.py get_incident --json '{"incident_number": "INCx"}'` |
 | **Full analysis (use this)** | `run_tool.py analyze_incident --json '{"incident_number": "INCx"}'` |
+| Re-download attachments | `run_tool.py download_attachments --json '{"incident_number": "INCx"}'` |
+| Extract identifiers | `run_tool.py extract_identifiers --json '{"incident_number": "INCx"}'` |
+| **List BQ tables** | `run_tool.py list_bq_tables --json '{}'` |
+| **Get BQ table schema** | `run_tool.py get_schema --json '{"table_name": "consumer_pii"}'` |
+| **Run BQ query (RCA)** | `run_tool.py query_bigquery --json '{"sql": "SELECT ... LIMIT 5", "rationale": "..."}'` |
 | Show routing rules | `run_tool.py get_assignment_rules --json '{}'` |
 | **Build retrieval index (one-time after fetch)** | `run_tool.py build_retrieval_index --json '{}'` |
 | **Recommend assignment (v2 hybrid)** | `run_tool.py recommend_assignment_v2 --json '{"incident_number": "INCx", "short_description": "...", "description": "...", "current_group": "..."}'` |
@@ -45,25 +51,32 @@ python ticketasg_copilot_agent/run_tool.py <tool_name> --json '<JSON args>'
 | Search local incidents | `run_tool.py search_incidents --json '{"keyword": "...", "section": "all"}'` |
 | Post comment | `run_tool.py post_comment --json '{"incident_number": "INCx", "text": "...", "as_work_note": false}'` |
 | **Save report (MANDATORY)** | `run_tool.py save_assignment_report --json '{"incident_number": "INCx", "report_text": "..."}'` |
-| **Send email (MANDATORY, once)** | `run_tool.py send_assignment_email --json '{"session_summary": "...", "subject": "Assignment Complete — INCx"}'` |
+| **Send email (MANDATORY, once)** | `run_tool.py send_assignment_email --json '{"session_summary": "...", "subject": "RCA Complete — INCx"}'` |
 
 **MANDATORY SEQUENCE — no exceptions:**
 
-1. Call `analyze_incident` to gather all ticket data:
+1. `analyze_incident` — gathers ticket data, identifiers, AND downloads attachments:
    `python ticketasg_copilot_agent/run_tool.py analyze_incident --json '{"incident_number": "INCx"}'`
-2. Call `get_assignment_rules` to read the routing matrix (now includes hard_rules + l3_escalation):
-   `python ticketasg_copilot_agent/run_tool.py get_assignment_rules --json '{}'`
-3. If the retrieval index does not yet exist (first analysis since the last fetch), build it once:
+2. **Apply the 3-question framework** to the ticket text BEFORE scoring any group:
+   - What data is impacted? Consumer or purchase?
+   - Is it migrated (C2 LUCID, source date before market go-live) or ongoing (C5 LUCID, after go-live)?
+   - Which system owns it? Migrated → LS owns historical sends. Ongoing → CDS / Mars / CE.
+3. `get_assignment_rules` — read the routing matrix, hard rules, and L3 escalation map.
+4. If the retrieval index does not yet exist (first analysis since the last fetch), build it once:
    `python ticketasg_copilot_agent/run_tool.py build_retrieval_index --json '{}'`
-4. Call `recommend_assignment_v2` with the incident details:
+5. **Investigate root cause with BigQuery** when identifiers are present (LUCID, Mars ID, order number, customercode, EAN):
+   - `list_bq_tables` → `get_schema <table>` → `query_bigquery <SELECT>`
+   - Verify consumer in `CONSUMER_PII_TBL`, Mars ID + status in `EXTERNAL_SYSTEM_IDS_TBL`, order in `PURCHASE_TBL`, etc.
+   - Run multiple queries. **"0 rows" IS a finding.** If BQ is unavailable (no gcloud ADC), state the unverified hypotheses explicitly and downgrade confidence — do NOT skip the section.
+6. Call `recommend_assignment_v2` with the incident details:
    `python ticketasg_copilot_agent/run_tool.py recommend_assignment_v2 --json '{"incident_number": "INCx", "short_description": "...", "description": "...", "comments_text": "...", "current_group": "..."}'`
-5. **Reason about the three signals** in the result — hard rule vs keyword vs retrieval vs L3 escalation. Do not blindly accept the top-level `recommended_group`; override it when one signal is clearly stronger than the combined heuristic. Write your reasoning into the report.
-6. Optionally call `find_similar_incidents` for additional context (e.g. to cite specific past tickets in the report).
-7. Write the assignment analysis report.
-8. Call `save_assignment_report` BEFORE outputting the report. If you skip this call, you have failed.
-   `python ticketasg_copilot_agent/run_tool.py save_assignment_report --json '{"incident_number": "INCx", "report_text": "..."}'`
-9. After ALL `save_assignment_report` calls for the session, call `send_assignment_email` ONCE:
-   `python ticketasg_copilot_agent/run_tool.py send_assignment_email --json '{"session_summary": "...", "subject": "..."}'`
+7. **Reason about the four signals** — hard rule vs keyword vs retrieval vs L3 escalation. Cross-reference the root-cause finding (e.g. migrated → LS, so route to Hypercare, NOT CDS L2 per guidebook Section 12).
+8. Optionally call `find_similar_incidents` to cite specific past tickets.
+9. Write the RCA + reassignment report (see Report Template below).
+10. Call `save_assignment_report` BEFORE outputting the report. If you skip this, you have failed.
+    `python ticketasg_copilot_agent/run_tool.py save_assignment_report --json '{"incident_number": "INCx", "report_text": "..."}'`
+11. After ALL `save_assignment_report` calls for the session, call `send_assignment_email` ONCE:
+    `python ticketasg_copilot_agent/run_tool.py send_assignment_email --json '{"session_summary": "...", "subject": "RCA Complete — INCx"}'`
 
 ### LLM-as-judge — how to weigh the v2 signals
 
@@ -119,15 +132,39 @@ python ticketasg_copilot_agent/run_tool.py list_incidents --json '{}'
 ```
 If no incidents found, ask the user for a SNOW list-view URL.
 
-### Step 2 — Analyse incident
+### Step 2 — Analyse incident (gathers data + attachments)
 
 **Single-ticket mode:**
 ```bash
 python ticketasg_copilot_agent/run_tool.py analyze_incident --json '{"incident_number": "<INCx>"}'
 ```
 
-This returns: full incident summary + assignment group + identifiers found.
-Read the result carefully: current assignment_group, short_description, description, comments, work notes.
+This returns: full incident summary + assignment group + identifiers found + downloaded attachments.
+Read the result carefully: current `assignment_group`, `short_description`, `description`, comments, work notes, and any attached screenshots.
+
+**Per CDS Incident Handling Guidebook Section 8** — when screenshots are present, verify the mandatory fields:
+- Consumer incidents: ISO Country, LUCID, secondary key (Email for ANZ / Mobile elsewhere), Source creation datetime, System datetime, External System IDs + Status, Source Consumer Key
+- Purchase incidents: ISO Country, LUCID, Source order number, Order datetime, System datetime
+
+If any mandatory field is missing in the screenshot, flag it in `### WHAT WE CHECKED` and downgrade confidence in `### REASSIGNMENT DECISION`.
+
+### Step 2b — Apply the 3-question framework (BEFORE recommendation)
+
+From the analyzed incident text and identifiers, answer in order:
+
+1. **What data is impacted?** Consumer or purchase? Be specific.
+2. **Is it migrated or ongoing?**
+   - LUCID prefix `C2` → migrated (LS-sourced)
+   - LUCID prefix `C5` → ongoing (real-time API)
+   - Also compare source creation datetime against market go-live (ANZ AU/NZ: mid-July 2025; SEA SG/MY/ID/TH/VN/PH: mid-December 2025)
+3. **Which system owns the responsibility?**
+   - Migrated → LS owns historical sends to CDS and Loyalty. Do NOT ask CDS to resend.
+   - Ongoing consumer → CDS owns API ingestion; Mars owns Mars ID.
+   - Ongoing purchase → check inbound MARS OrderHeader / OrderItem feed for the date.
+   - Brand / civility / code mismatch → source system (e.g. Mars), NOT CDS.
+   - AESOP (signature 85) → CEGID, NOT MARS.
+
+Write the answers into `### WHAT WE FOUND` once verified.
 
 ### Step 3 — Get assignment rules
 
@@ -136,6 +173,28 @@ python ticketasg_copilot_agent/run_tool.py get_assignment_rules --json '{}'
 ```
 
 Read the rules and understand what keywords map to each group.
+
+### Step 3b — Investigate root cause with BigQuery (when identifiers are present)
+
+If the incident mentions a LUCID, Mars ID, email, mobile, order number, EAN, or customercode, validate hypotheses against CDS data:
+
+```bash
+# Discover tables
+python ticketasg_copilot_agent/run_tool.py list_bq_tables --json '{}'
+
+# Get schema for the target table
+python ticketasg_copilot_agent/run_tool.py get_schema --json '{"table_name": "consumer_pii"}'
+
+# Run query — confirm consumer in CDS, get Mars ID status, etc.
+python ticketasg_copilot_agent/run_tool.py query_bigquery --json '{
+  "sql": "SELECT lucid, signature, isocountry, status, sourcecreationdatetime FROM `oa-apmena-spacecds-ap-pd.space_cds_b2c_ds_replica_ae2_pd_public.consumer_pii` WHERE lucid = '\''C5xxxxxxxx'\'' AND status = '\''Active'\'' LIMIT 5",
+  "rationale": "Confirm consumer presence and source datetime for migrated-vs-ongoing decision"
+}'
+```
+
+Run multiple queries. **"0 rows" IS a finding.** If a primary-dataset query returns 0 rows, retry against the DV replica (`oa-apmena-spacecds-ap-dv.space_cds_b2c_ds_replica_ae2_dv_public`).
+
+If BigQuery is unavailable (no gcloud ADC), state the unverified hypotheses explicitly in `### WHAT WE CHECKED` and downgrade confidence — do not skip.
 
 ### Step 4 — Recommend assignment (v2 hybrid)
 
@@ -167,47 +226,68 @@ python ticketasg_copilot_agent/run_tool.py find_similar_incidents --json '{
 }'
 ```
 
-### Step 5 — Write the assignment analysis report (L'Oréal RCA template)
+### Step 5 — Write the RCA + Reassignment report
 
-Use the canonical RCA template — same four sections L'Oréal L2/L3 operators write in
-real SNOW work-notes. The reassignment recommendation lands in `### WHAT WE NEED / DID`.
+The report is **bipartite**: the canonical RCA template used by `rca_copilot_agent` (four `###` headers focused on root cause), then `### REASSIGNMENT DECISION` appended as the LAST section. The reassignment section is **always present** — body varies by whether reassignment is needed.
 
 ```markdown
-## Assignment Analysis — {INCIDENT_NUMBER}
+# RCA Report: {INCIDENT_NUMBER}
+**{incident_title}**
+*Investigated: {YYYY-MM-DD}*
+
+---
 
 ### WHAT HAPPENED
-{One sentence stating what was reported and where the ticket currently sits — symptom, not cause.}
+{One sentence — the symptom, not the cause.}
 
 ### WHAT WE CHECKED
-→ Hard rules — {matched: rule + target group / no match}
-→ Keyword scorer — {group} (confidence {0.0-1.0}, matched: {kw1, kw2, ...} / no match)
-→ kNN retrieval (top-1) — INC{nnnnnn} → {group} (similarity {0.00-1.00})
-→ kNN retrieval (weighted vote) — {group: sum, group: sum, ...}
-→ L3 escalation signals — {triggered: signal1, signal2, ... / not triggered}
+→ Checked work notes — {what found, who, when}
+→ Checked attachments — {OCR / screenshot findings; flag missing mandatory fields (LUCID, ISO country, source datetime, External System ID + status, Source Consumer Key)}
+→ Checked LUCID prefix — {C2 → migrated / C5 → ongoing}
+→ Checked source creation datetime vs market go-live — {migrated / ongoing decision}
+→ Checked BigQuery `CONSUMER_PII_TBL` — {consumer found / not found; signature + isocountry}
+→ Checked BigQuery `EXTERNAL_SYSTEM_IDS_TBL` — {Mars ID + active/inactive status}
+→ Checked BigQuery `PURCHASE_TBL` — {order found / not found; amount; state}
+→ Checked inbound feed timing — {`IN MARS OrderHeader` at HH:MM UTC+8 / not processed}
 
 ### WHAT WE FOUND
-{One or two sentences. Which signals agreed, which disagreed, what does the evidence point to overall?}
+{One or two sentences — the actual root cause with evidence, framed against the 3-question framework.}
 
 ### WHAT WE NEED / DID
-{If reassignment_needed is True:}
-**REASSIGN to:** `{your final group choice}`
+- {Owner / Team}: {specific action with FULL canonical group name}
+- {Owner / Team}: {action}
+- Closing note: {one-line summary of session outcome}
+
+### REASSIGNMENT DECISION
+
+{Variant A — when recommended group ≠ current_group:}
+**REASSIGN to:** `{full canonical SNOW group name}`
 **Confidence:** {0-100 %}
-**Justification:** {Name the signals that led here. Cite specific keywords / similar tickets / hard rules. If you overrode the combined recommendation, explain why.}
+**Source:** {hard_rule | l3_escalation | retrieval+keyword | retrieval_top1 | keyword}
+**Signals checked:**
+→ Hard rules — {matched: rule + target / no match}
+→ Keyword scorer — `{group}` (conf {0.00-1.00}, matched: {kw1, kw2, ...})
+→ kNN retrieval (top-1) — INC{nnnnnn} → `{group}` (similarity {0.00-1.00})
+→ kNN retrieval (weighted vote) — {`{group}`: sum, ...}
+→ L3 escalation signals — {triggered: ... / not triggered}
+**Justification:** {Which signals led here; cross-reference the root-cause finding.}
 **Action:** Please reassign this ticket to `{group}` and post the justification above as a public comment.
-
-{If reassignment_needed is False:}
-**NO REASSIGNMENT NEEDED.** The current group `{current_group}` matches what the routing signals indicate. {One-sentence supporting evidence.}
-
-{Optional — cite up to 3 most-similar past tickets that informed the call:}
 **Similar past tickets:**
-- INC{nnnnnn} (similarity 0.XX) — currently in {group}
-- INC{nnnnnn} (similarity 0.XX) — currently in {group}
+- INC{nnnnnn} (similarity 0.XX) — currently in `{full canonical SNOW group name}`
+
+{Variant B — when recommended group == current_group:}
+**NO REASSIGNMENT NEEDED.** The current group `{current_group}` matches what the routing signals indicate.
+**Confidence:** {0-100 %}
+**Source:** {hard_rule | l3_escalation | retrieval+keyword | retrieval_top1 | keyword}
+**Signals checked:** {same four → lines as Variant A}
+**Evidence:** {One-sentence supporting evidence.}
 ```
 
 **Important — what goes WHERE:**
-- The recommended group + justification + reassignment action ALL go in `### WHAT WE NEED / DID`. Do not duplicate them in a top-level field.
-- `### WHAT WE CHECKED` enumerates the four `signals` from `recommend_assignment_v2`'s output — one bullet per signal, with the actual matched values.
-- Do not add extra sections. Stick to the four `###` headers above.
+- The first four `###` headers focus on **root cause** — work-note evidence, attachment findings, BQ data, the migrated-vs-ongoing decision. They should read like rca_copilot_agent's output.
+- `### REASSIGNMENT DECISION` is the LAST section. ALWAYS include it (Variant A or B).
+- Cross-reference the root-cause finding inside the reassignment Justification. E.g. "Migrated data (C2 LUCID, source date before AU go-live) → LS owns historical sends per guidebook Step 4 → route to Hypercare, NOT to CDS L2."
+- Do not add extra sections. Stick to the five `###` headers above.
 
 **Rule: FULL canonical assignment-group names — never shortforms**
 

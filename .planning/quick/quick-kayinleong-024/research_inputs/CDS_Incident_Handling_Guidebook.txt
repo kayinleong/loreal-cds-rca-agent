@@ -1,0 +1,474 @@
+
+CDS L2 / L3 Incident Handling Guidebook
+Knowledge Transfer — Consumer & Purchase Data
+
+KT Owner
+Dipti Patil
+Audience
+L2 / L3 CDS Support Team (API & Data)
+Scope
+ANZ + SEA rollout markets (SG, MY, ID, TH, VN, PH)
+Source Material
+KT session recording + B2C Mapping Doc V3 + CDS Overview
+Purpose
+Standard reference for analyzing and responding to incidents
+
+How to use this document. This is a living reference. Open it whenever you are unsure how to start an investigation, what to check, or how to respond. The 3-question framework on the final page is the fastest way to orient yourself on any new ticket.
+
+Contents
+1.  Purpose & objectives
+2.  System landscape (mental model)
+3.  Migration vs ongoing data — the critical distinction
+4.  Go-live timeline (time-based checks)
+5.  Key identifiers you must understand
+6.  Brand & country reference
+7.  Inbound source data flows
+8.  Mandatory fields for incident screenshots
+9.  Standard incident analysis — step by step
+10. Common incident patterns & correct handling
+11. Status mismatch (PI vs External System ID)
+12. Common mistakes — what NOT to do
+13. Expectations from L2 / L3 going forward
+14. Final takeaway — the 3 questions
+Appendix A. CDS table relationships
+
+1.  Purpose & objectives
+This guidebook captures the knowledge transfer session run by Dipti for the L2 / L3 team. The session focused on building a shared mental model of how CDS, legacy systems, and downstream systems work together, and on standardising how the team analyses and responds to incidents.
+The expectation is clear:
+L2 / L3 must not jump to conclusions or fixes. Proper analysis must come first.
+
+By following this guide, the team should be able to:
+	•	Independently analyse incidents before escalating.
+	•	Identify what to check, in what order, and why.
+	•	Reduce incorrect RCAs, unnecessary checks, and mis-routed tickets.
+	•	Apply consistent investigation logic across markets and brands.
+	•	Respond to clients with evidence — screenshots, timestamps, and a clear logical conclusion.
+2.  System landscape (mental model)
+Before touching any incident, hold this picture in mind. Almost every analysis turns on understanding which system created or now owns the data.
+2.1  Core systems
+System
+Role
+Notes for incident handling
+CPRV
+Legacy B2C source — original system for consumer, purchase, campaign, and loyalty data.
+Not directly accessible. Data is exposed via LS during migration only.
+LS (Landing Server)
+Federated layer that exposes CPRV data. Used only for migration.
+Source for historical (migrated) consumers and purchases. Many migration-era data gaps originate here.
+CDS
+Current source of truth for consumer data. Generates LUCID. Holds migrated + ongoing records.
+Cloud SQL + BigQuery. Feeds downstream via APIs and Computational Engine (CE) batch extracts.
+Mars
+Assigns Mars ID to each consumer.
+Depends on CDS for LUCID. Receives consumer data from CDS via batch & APIs. Sends Mars ID back to CDS.
+Downstream
+Loyalty, SFCC, SFMC, reporting (CE / BigQuery extracts).
+Historical data flows from LS; ongoing data flows from CDS / CE.
+
+2.2  Data flow — at a glance
+Migration era (historical):
+CPRV  →  LS  →  CDS  →  Downstream (Loyalty, SFCC, SFMC, Reporting)
+LS also sends historical purchases directly to Loyalty.
+
+Ongoing (post go-live):
+Beauty ID / iBeauty / MyBeauty  →  Real-time APIs  →  CDS  →  Mars  →  Mars ID back to CDS
+CDS  →  CE nightly extracts  →  Mars / Loyalty / SFMC / SFCC / Reporting
+3.  Migration vs ongoing data — the critical distinction
+This single distinction drives almost every incident analysis. Get this right before anything else.
+
+3.1  Migrated data
+Attribute
+Migrated data
+Created
+Before market go-live
+Source
+LS (Landing Server) — not CPRV directly
+LUCID prefix
+C2
+Source Consumer Key
+Populated (LS Cust ID present)
+Common issues
+Missing orders, amount mismatches, Mars ID mismatches, loyalty points not reflected
+Owner of historical sends
+LS — sends historical orders/consumers to Loyalty and CDS. CDS does NOT push historical purchases to Loyalty.
+
+3.2  Ongoing (post go-live) data
+Attribute
+Ongoing data
+Created
+After market go-live
+Source
+Real-time APIs from Beauty ID, iBeauty, MyBeauty
+LUCID prefix
+C5
+Source Creation Date
+After go-live date
+Common issues
+API ingestion failures, Mars linkage delays, CE incremental extract not picked, code/value rejections (e.g. unknown civility)
+Owner of downstream sync
+CDS via real-time APIs and CE nightly batch (incremental) extracts.
+4.  Go-live timeline (time-based checks)
+Compare the consumer's source creation datetime, or the order datetime, against the market go-live to decide if the record is migrated or ongoing.
+Region
+Markets
+Go-live
+ANZ
+AU, NZ
+Mid-July
+SEA rollout
+SG, MY, ID, TH, VN, PH
+Mid-December 2025
+
+Rule. If the consumer or purchase creation date is before the relevant market go-live → treat it as migrated (LS-sourced). If after → treat it as ongoing (API-sourced).
+5.  Key identifiers you must understand
+5.1  LUCID — L'Oréal Unique Consumer ID
+	•	Generated only by CDS.
+	•	Global, unique consumer identifier.
+	•	Same email or mobile within a country → same LUCID across brands.
+	•	Different email and different mobile → different LUCID.
+
+LUCID prefix
+Meaning
+C2
+Migrated consumer (sourced from LS)
+C5
+Ongoing consumer (created after go-live via real-time API)
+
+5.2  Mars ID
+	•	Generated by Mars after CDS sends consumer data.
+	•	Multiple Mars IDs can exist for one consumer, but only ONE is active at any time.
+	•	When Mars creates a new ID, CDS inactivates the older Mars ID(s).
+5.3  Source Consumer Key (LS Customer ID)
+	•	The LS-side customer identifier.
+	•	If populated, it is a strong signal that the consumer is migrated.
+	•	Used during migration to prevent duplicate consumers.
+6.  Brand & country reference
+Brand code (Source Signature) is one of the first things to check on any consumer or purchase record. The list below is taken from the B2C Latest Mapping Doc V3 and reflects the brands currently in scope for ANZ inbound data.
+Code
+Brand
+Source system
+Markets in scope
+01
+Lancôme (LAN)
+MARS
+AU, NZ
+16
+Giorgio Armani (GAB)
+MARS
+AU
+24
+La Roche-Posay (LRP)
+SFMC
+AU
+25
+(Brand 25)
+SFMC
+AU
+42
+SkinCeuticals (SKC)
+MARS
+AU
+45
+Kiehl's (KIE)
+MARS
+AU, NZ
+51
+YSL Beauty (YSL)
+MARS
+AU
+75
+IT Cosmetics (ITC)
+SFMC
+AU
+85
+AESOP
+CEGID
+AU, NZ
+C4
+Kérastase (KER)
+SFMC
+AU
+
+Note on AESOP. AESOP (signature 85) is sourced via CEGID rather than MARS. If you see signature 85 on an incident, the inbound flow is CEGID — do not look for it in MARS feeds.
+7.  Inbound source data flows
+These are the daily inbound feeds into CDS. When investigating an issue with a specific data object (consumer, purchase, campaign, etc.), confirm whether the upstream file arrived and was processed.
+Data object
+Source
+CDS interface
+PROD time (UTC+8)
+Consumer (Cust_Basic)
+MARS
+IN MARS Cust_Basic
+01:45 (AU) / 03:45 (NZ)
+Order Header
+MARS
+IN MARS OrderHeader
+01:46 (AU) / 03:46 (NZ)
+Order Item
+MARS
+IN MARS OrderItem
+01:46 (AU) / 03:46 (NZ)
+BA (Master)
+MARS
+IN MARS BA
+01:47
+Counter (Master)
+MARS
+IN MARS COUNTER
+01:48
+CBR Items
+MARS
+IN MARS CBR
+01:49
+BA / Counter (AESOP)
+CEGID
+IN CEGID BA / COUNTER
+01:47
+Product / Hierarchy
+SAP
+IN SAP Product / Hierarchy
+00:30
+Campaign / Target / Response
+SFMC
+IN SFMC Campaign / Targ / Resp
+05:30
+Opt-In
+SFMC
+IN SFMC OptIn
+05:30
+Prospect
+SFMC
+IN SFMC Prospect
+06:00
+Calculated Attributes
+CE
+IN CE CalculatedAttributes
+05:30
+Inactive Consumer Delete
+CE
+IN CE Delete Inactive Consumer
+05:30
+
+When using this for triage: if a consumer or order looks missing in CDS, first check whether the relevant inbound file arrived on schedule and processed cleanly. A missing file is a different problem from a rejected record.
+8.  Mandatory fields for incident screenshots
+Screenshots are evidence. If a screenshot is missing any of the fields below, your analysis is incomplete and the ticket will bounce back.
+8.1  Consumer incidents
+Field
+Why it matters
+ISO Country / Country Signature
+Confirms market scope (AU, NZ, SG, MY, ID, TH, VN, PH).
+LUCID
+Unique consumer reference. Prefix tells you migrated vs ongoing.
+Secondary key — Email (ANZ) / Mobile (others)
+Required to identify the consumer across systems.
+Source creation datetime
+When the consumer was originally created at source. Used for migrated vs ongoing check.
+System created / updated datetime
+When CDS first received and last modified the record.
+External System IDs + Status
+Mars ID and Active / Inactive flag — critical for Mars-related incidents.
+Source Consumer Key (LS Cust ID)
+If populated → strong indicator the consumer is migrated.
+8.2  Purchase incidents
+Field
+Why it matters
+ISO Country / Country Signature
+Confirms market scope and brand.
+LUCID
+Links the purchase to the consumer.
+Source order number
+Original order reference at source — used for cross-system matching.
+Order datetime
+When the purchase happened. Used for migrated vs ongoing check.
+System created / updated datetime
+When CDS received and last modified the order.
+
+Rule of thumb. Source creation datetime ≠ system created datetime. The source datetime is when the record originated upstream (e.g. in CPRV). The system datetime is when CDS first stored it. Use the source datetime to decide migrated vs ongoing.
+9.  Standard incident analysis — step by step
+Follow these five steps in order. Do not skip ahead.
+Step 1  —  Understand the ask
+Before touching any data, clarify what is actually being reported.
+	•	What exactly is missing or wrong? Consumer? Order? Loyalty points? Brand / civility / location?
+	•	Which market / country?
+	•	Which system raised the issue (CDS, Mars, Loyalty, SFMC, SA)?
+	•	What does the requester expect to see?
+Step 2  —  Identify data type (consumer vs purchase)
+Consumer issues
+Purchase issues
+Cannot find consumer
+Missing orders
+Duplicate consumer
+Incorrect order amount
+Wrong details (civility, brand, status)
+Loyalty points not awarded
+Inactive Mars ID
+
+Step 3  —  Check creation timing
+Always pull both timestamps:
+	•	Source creation datetime
+	•	Order datetime (for purchases)
+Compare against the market go-live (Section 4) to decide migrated vs ongoing. This decision determines which system owns the issue.
+Step 4  —  Migration check (C2 LUCID)
+If the record is migrated:
+	•	Confirm Source Consumer Key is populated.
+	•	Confirm LS Customer ID exists.
+	•	If the record is missing in a downstream system, do NOT ask CDS to resend. LS is the owner of historical sends to CDS and Loyalty.
+
+Correct action: route or escalate to LS. Do not raise a CDS downstream-extract request for migrated data.
+Step 5  —  Ongoing data check (C5 LUCID)
+If the record is ongoing:
+	•	Confirm API ingestion success in CDS.
+	•	Confirm consumer is present in CONSUMER_PII_TBL.
+	•	Confirm Mars ID linkage in EXTERNAL_SYSTEM_IDS_TBL.
+	•	If Mars does not have the consumer, confirm whether the CE nightly batch (incremental extract) has run and the consumer was picked up.
+
+Correct action: ask the CE team for the file name and run confirmation, then ask Mars to ingest the file. Do not assume CDS is broken until you have evidence.
+10.  Common incident patterns & correct handling
+10.1  Loyalty points missing
+Ask first: is the purchase migrated or ongoing?
+	•	Migrated → LS is responsible for sending historical orders to Loyalty. CDS does NOT push historical purchases.
+	•	Ongoing → check the downstream event/extract flow from CDS. Confirm the order exists in CDS first.
+
+Common mistake: raising a defect on CDS for missing loyalty points without first confirming that the purchase is even in CDS, and without checking whether it is historical or live.
+10.2  "Consumer not found in Mars"
+Possible reasons:
+	•	Mars never ingested the CDS extract.
+	•	Mars ID is inactive (a newer one was created).
+	•	Incremental extract was not triggered or the consumer was not in the delta window.
+Correct handling:
+	•	Confirm the consumer exists in CDS (CONSUMER_PII_TBL).
+	•	Check EXTERNAL_SYSTEM_IDS_TBL for the Mars ID and its status.
+	•	Ask the CE team when the extract last ran and whether this consumer was included.
+	•	Ask Mars to ingest the relevant file.
+10.3  Brand / civility / code mismatch
+Example discussed in the session: Mars sending civility = 101, but CDS only accepts the standardised value 005.
+	•	CDS follows a standardised code list. Unknown codes are rejected.
+	•	This is not a CDS ingestion bug — it is a source data compliance issue.
+
+Correct action: ask the source system (Mars in this example) to fix its mapping. Do not implement quick fixes in CDS to accept the bad code unless explicitly approved.
+10.4  Missing orders
+	•	Migrated → LS owns the historical send. Confirm whether LS sent the order to CDS / Loyalty.
+	•	Ongoing → check the inbound MARS OrderHeader / OrderItem feeds for the date in question (file arrival, processing status).
+	•	Always confirm the source order number, order datetime, and country signature before responding.
+10.5  Incorrect order amount
+	•	Pull the source order from the upstream system and compare with CDS PURCHASE_TBL.
+	•	If CDS matches source → the issue is downstream (Loyalty / reporting). Do not patch CDS.
+	•	If CDS does not match source → check the OrderHeader / OrderItem ingestion for that order date.
+10.6  Brand / location data wrong
+	•	Brand and location data often does not originate from CDS.
+	•	If the issue is store / location related, identify the upstream system sending the metadata (typically Counter / BA feeds from MARS or CEGID).
+	•	Avoid the default of routing every metadata issue to CDS.
+11.  Status mismatch (PI vs External System ID)
+Observed scenarios:
+	•	PI status = inactive, External System ID = active (or vice versa).
+Expected behaviour:
+	•	Only one active Mars ID per consumer.
+	•	Older Mars IDs are inactivated when a new one is created.
+
+Action: verify the scenario before raising RCA. A status mismatch is not automatically a defect — it may be the expected lifecycle behaviour. Only escalate if it is genuinely inconsistent with the rule above.
+12.  Common mistakes — what NOT to do
+✗  Checking the wrong country / market.
+✗  Jumping straight to merge requests or data patches without root cause.
+✗  Asking CDS to resend migrated data — that is LS's responsibility.
+✗  Providing RCA without verifying source creation dates.
+✗  Responding without screenshots or model checks.
+✗  Defaulting every metadata issue to CDS without identifying the upstream owner.
+✗  Treating standardised-code rejections as CDS bugs.
+13.  Expectations from L2 / L3 going forward
+	•	Perform first-level analysis independently.
+	•	Use the CDS data model and B2C Mapping Doc V3 to validate fields and routing.
+	•	Bring specific, evidenced doubts to KT calls — not open-ended questions.
+	•	Provide on every ticket: clear analysis, screenshots with all mandatory fields, and a logical conclusion.
+	•	Escalate only when needed, with evidence.
+14.  Final takeaway — the 3 questions
+If you cannot solve an incident, it is almost always because one of these three questions has not been answered correctly. Answer them in order.
+
+1.  What data is impacted?
+    Consumer or purchase? Be specific.
+
+2.  Is it migrated or ongoing?
+    Use source creation datetime vs market go-live. Use LUCID prefix (C2 vs C5) to confirm.
+
+3.  Which system owns that responsibility?
+    Migrated → LS owns historical sends. Ongoing → CDS owns API + CE batch. Mars owns Mars ID.
+
+If these are clear, the correct action becomes obvious.
+
+Appendix A.  CDS table relationships
+The following relationships are taken from the B2C Latest Mapping Doc V3 (Data Dependency sheet). Use this when navigating the CDS data model during analysis. CONSUMER_PII_TBL is the master.
+Table
+Master / parent
+Reference column
+FK?
+CONSUMER_PII_TBL
+—
+(master)
+
+CONSUMER_EXTRA_TBL
+CONSUMER_PII_TBL
+consumerKey
+Y
+ADDRESSES_TBL
+CONSUMER_PII_TBL
+consumerKey
+Y
+SOCIAL_CONTACTS_TBL
+CONSUMER_PII_TBL
+consumerKey
+Y
+EXTERNAL_SYSTEM_IDS_TBL
+CONSUMER_PII_TBL
+consumerKey
+Y
+EXTERNAL_SYSTEM_IDS_TBL
+—
+consumerSourceId
+
+AGREEMENT_LOGS_TBL
+CONSUMER_PII_TBL
+consumerKey
+Y
+BEHAVIOUR_TBL
+CONSUMER_PII_TBL
+consumerKey
+Y
+BEHAVIOUR_ITEMS_TBL
+BEHAVIOUR_TBL
+behaviourKey
+Y
+CONSUMER_PROSPECT_TBL
+CONSUMER_PII_TBL
+consumerKey
+Y
+MARKETING_PREFERENCES_TBL
+CONSUMER_PII_TBL
+consumerKey
+Y
+BEAUTY_EXPERIENCE_TBL
+CONSUMER_PII_TBL
+consumerKey
+Y
+PURCHASE_TBL
+(SALES_REP / LOCATION refs)
+salesRepId / locationId
+
+PURCHASE_COMMERCIAL_IDS_TBL
+PURCHASE_TBL
+purchaseKey
+Y
+PURCHASEITEM_TBL
+PURCHASE_TBL
+purchaseKey
+Y
+PURCHASEITEM_TBL
+PRODUCT_TBL
+productKey
+Y
+PURCHASEITEM_COMMERCIAL_IDS_TBL
+PURCHASEITEM_TBL
+purchaseItemKey
+Y
+SHIPMENT_ADDRESSES_TBL
+SHIPMENT_TBL
+shippingKey
+Y

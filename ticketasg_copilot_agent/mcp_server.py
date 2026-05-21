@@ -10,15 +10,25 @@ ServiceNow tools:
   get_incident         — Fetch a single incident by number (live from SNOW)
   get_incident_summary — Get full formatted text of a loaded incident
   list_incidents       — List all locally stored incidents
-  analyze_incident     — ONE-STOP: fetch + identifiers for one incident
+  analyze_incident     — ONE-STOP: fetch + identifiers + attachments for one incident
   search_incidents     — Search incident text for a keyword
   post_comment         — Post a comment (or work note) to an incident
+  extract_identifiers  — Pull structured identifiers (LUCID, Mars ID, orders, EAN) from a cached incident
+  download_attachments — Download all attachments for an incident (screenshots are evidence)
+
+BigQuery tools (RCA-parity with rca_copilot_agent):
+  query_bigquery       — Read-only SELECT/WITH against SPACE CDS dataset
+  get_schema           — Table schema + ready-to-use query patterns from local schema.json
+  list_bq_tables       — List all tables in the SPACE CDS dataset
 
 Assignment tools:
-  get_assignment_rules    — Show the routing matrix (10 groups + keywords)
-  recommend_assignment    — Score incident signals and recommend the L2 group
-  save_assignment_report  — Save a completed assignment report to disk
-  send_assignment_email   — Send HTML email notification when analysis is complete
+  get_assignment_rules     — Show the routing matrix (10 groups + keywords + hard rules + L3 escalation)
+  recommend_assignment     — Legacy v1 keyword-only path (kept for back-compat)
+  recommend_assignment_v2  — Hybrid: hard rules + keyword + kNN retrieval + L3 escalation
+  find_similar_incidents   — kNN nearest-neighbour retrieval over local corpus
+  build_retrieval_index    — Rebuild sentence-transformers index after fetch_incidents
+  save_assignment_report   — Save a completed RCA + reassignment report to disk
+  send_assignment_email    — Send HTML email notification when analysis is complete
 
 USAGE:
     python mcp_server.py
@@ -187,11 +197,12 @@ def create_mcp_server(reports_dir: str):
                 name="analyze_incident",
                 description=(
                     "ONE-STOP analysis tool for a single incident. "
-                    "Fetches full incident data, extracts structured identifiers, "
-                    "and returns the complete context needed for assignment analysis. "
-                    "ALWAYS use this as the first step when analysing an incident — "
-                    "do NOT call get_incident_summary separately. "
-                    "After this, call get_assignment_rules and then recommend_assignment."
+                    "Fetches full incident data, extracts structured identifiers (LUCID, Mars ID, "
+                    "orders, EAN), and downloads any attachments (screenshots ARE evidence per the "
+                    "CDS Incident Handling Guidebook, Section 8). Returns the complete context "
+                    "needed for both RCA investigation and assignment analysis. "
+                    "ALWAYS use this as the first step — do NOT call get_incident_summary, "
+                    "extract_identifiers, or download_attachments separately."
                 ),
                 inputSchema={
                     "type": "object",
@@ -393,6 +404,104 @@ def create_mcp_server(reports_dir: str):
                 },
             ),
             Tool(
+                name="extract_identifiers",
+                description=(
+                    "Extract structured identifiers (LUCID, Mars ID, order numbers, EAN codes, "
+                    "emails, customercodes) from a locally-cached incident's text. Use to obtain "
+                    "the exact values to feed into BigQuery queries."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "incident_number": {
+                            "type": "string",
+                            "description": "Incident number, e.g. INC10403788",
+                        },
+                    },
+                    "required": ["incident_number"],
+                },
+            ),
+            Tool(
+                name="download_attachments",
+                description=(
+                    "Download all attachments for a specific incident to the local attachments directory. "
+                    "Call this after analyze_incident when screenshots or files are referenced — "
+                    "the CDS Incident Handling Guidebook (Section 8) treats screenshots as evidence "
+                    "and requires mandatory fields (LUCID, country, source datetime, External System ID "
+                    "status, Source Consumer Key) to be visible. Returns the list of downloaded file paths."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "incident_number": {
+                            "type": "string",
+                            "description": "Incident number, e.g. INC10403788",
+                        },
+                    },
+                    "required": ["incident_number"],
+                },
+            ),
+            Tool(
+                name="query_bigquery",
+                description=(
+                    "Execute a read-only SELECT or WITH query against the SPACE CDS BigQuery dataset. "
+                    "Use to verify the migrated-vs-ongoing question and to validate routing hypotheses "
+                    "with data: confirm the consumer is in CONSUMER_PII_TBL, check EXTERNAL_SYSTEM_IDS_TBL "
+                    "for Mars ID + status, look up orders in PURCHASE_TBL, etc. Blocked from INSERT/UPDATE/"
+                    "DELETE/DROP. Always add a LIMIT clause. Use backticks for table refs: "
+                    "`oa-apmena-spacecds-ap-pd.space_cds_b2c_ds_replica_ae2_pd_public.table_name`. "
+                    "Call get_schema first to confirm column names."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "sql": {
+                            "type": "string",
+                            "description": "GoogleSQL SELECT or WITH query. Must include LIMIT.",
+                        },
+                        "rationale": {
+                            "type": "string",
+                            "description": "One sentence explaining what you are looking for (for audit logs).",
+                        },
+                    },
+                    "required": ["sql"],
+                },
+            ),
+            Tool(
+                name="get_schema",
+                description=(
+                    "Get schema info for a BigQuery table from local schema.json, or list all tables "
+                    "when no table name is given. Returns column names, types, relationships, and "
+                    "ready-to-use query patterns. Faster than a live BQ call — always use this before "
+                    "writing a query to confirm column names."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "table_name": {
+                            "type": "string",
+                            "description": (
+                                "Exact table name (e.g. 'consumer_pii') or a partial substring to "
+                                "search. Leave empty to list all tables in the dataset."
+                            ),
+                            "default": "",
+                        },
+                    },
+                },
+            ),
+            Tool(
+                name="list_bq_tables",
+                description=(
+                    "List all tables in the SPACE CDS BigQuery dataset with their RCA purpose. "
+                    "Reads from local schema.json — instant, no BQ cost. "
+                    "Use to discover which table to query before calling get_schema."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                },
+            ),
+            Tool(
                 name="save_assignment_report",
                 description=(
                     "Save a completed assignment analysis report to the local reports directory. "
@@ -586,10 +695,20 @@ async def _dispatch(name: str, arguments: dict, reports_dir: str) -> str:
         ids_section = (
             f"IDENTIFIERS FOUND:\n{json.dumps(ids, indent=2)}"
             if ids
-            else "IDENTIFIERS: None found."
+            else "IDENTIFIERS: None found (no order IDs, LUCID, Mars ID, emails, or EAN codes)."
         )
 
-        return "\n\n".join([summary, ids_section])
+        attachment_section = "ATTACHMENTS: None."
+        inc = store.get_incident(number)
+        if inc:
+            att = inc.get("attachments", {})
+            total = len(att.get("images", [])) + len(att.get("files", []))
+            if total > 0:
+                attachment_section = await _dispatch(
+                    "download_attachments", {"incident_number": number}, reports_dir
+                )
+
+        return "\n\n".join([summary, ids_section, attachment_section])
 
     elif name == "search_incidents":
         _ensure_store_loaded(reports_dir)
@@ -720,6 +839,68 @@ async def _dispatch(name: str, arguments: dict, reports_dir: str) -> str:
         )
         return json.dumps(info, indent=2)
 
+    elif name == "extract_identifiers":
+        _ensure_store_loaded(reports_dir)
+        from tools.incident_store import get_store
+        ids = get_store().extract_identifiers(arguments["incident_number"])
+        if not ids:
+            return f"No structured identifiers found in {arguments['incident_number']}."
+        return json.dumps(ids, indent=2)
+
+    elif name == "download_attachments":
+        _ensure_store_loaded(reports_dir)
+        from tools.incident_store import get_store
+        number = arguments["incident_number"]
+        inc = get_store().get_incident(number)
+        if not inc:
+            return f"Incident {number} not found locally. Fetch it first with get_incident."
+
+        incident_meta = inc.get("incident", {})
+        sys_id = incident_meta.get("sys_id", "")
+        if not sys_id:
+            return f"Cannot determine sys_id for {number}."
+
+        if number.upper().startswith("RITM"):
+            att_table = "sc_req_item"
+        elif number.upper().startswith("TASK"):
+            att_table = "sc_task"
+        else:
+            att_table = "incident"
+
+        reader, cfg = _build_reader()
+        safe_number = number.replace("/", "_").replace("\\", "_")
+        save_dir = os.path.join(cfg.attachments_dir, safe_number)
+        paths = reader.download_all_attachments(att_table, sys_id, save_dir)
+
+        if not paths:
+            att = inc.get("attachments", {})
+            total = len(att.get("images", [])) + len(att.get("files", []))
+            if total == 0:
+                return f"No attachments found for {number}."
+            return f"Attachment metadata shows {total} file(s) but none could be downloaded. Check credentials."
+
+        lines = [f"Downloaded {len(paths)} attachment(s) for {number} → {save_dir}"]
+        for p in paths:
+            lines.append(f"  {os.path.basename(p)}")
+        return "\n".join(lines)
+
+    elif name == "query_bigquery":
+        from tools.bigquery_tool import is_enabled, query_bigquery as bq_query, _BQ_UNAVAILABLE
+        if not is_enabled():
+            return _BQ_UNAVAILABLE
+        return bq_query(
+            sql=arguments["sql"],
+            rationale=arguments.get("rationale", ""),
+        )
+
+    elif name == "get_schema":
+        from tools.bigquery_tool import get_schema_from_file
+        return get_schema_from_file(arguments.get("table_name", ""))
+
+    elif name == "list_bq_tables":
+        from tools.bigquery_tool import get_schema_from_file
+        return get_schema_from_file("")
+
     elif name == "save_assignment_report":
         number = arguments["incident_number"]
         report_text = arguments["report_text"]
@@ -827,7 +1008,10 @@ def _run_jsonrpc_fallback(reports_dir: str) -> None:
                     for t in [
                         "fetch_incidents", "get_incident", "get_incident_summary",
                         "list_incidents", "analyze_incident", "search_incidents", "post_comment",
-                        "get_assignment_rules", "recommend_assignment",
+                        "extract_identifiers", "download_attachments",
+                        "query_bigquery", "get_schema", "list_bq_tables",
+                        "get_assignment_rules", "recommend_assignment", "recommend_assignment_v2",
+                        "find_similar_incidents", "build_retrieval_index",
                         "save_assignment_report", "send_assignment_email",
                     ]
                 ]}
