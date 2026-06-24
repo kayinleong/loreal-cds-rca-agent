@@ -111,8 +111,11 @@ Confirm: which seed, how many rows, and which columns to vary.
 - The generated `INSERT`s are **BigQuery GoogleSQL** for the DV dataset [A1 confirmed
   2026-06-24] — fully-qualified backtick table, single-quoted strings,
   `TIMESTAMP 'YYYY-MM-DD HH:MM:SS+00'` literals, no `::` casts.
-- Column rendering is TYPE-DRIVEN from `.docs/dv_columns.json` [A2/A3]. If that file is
-  `confirmed: false`, note that the DV column types should be re-fetched via
-  `INFORMATION_SCHEMA` with ADC under a `@loreal.com` account before production.
+- Column rendering is TYPE-DRIVEN from `.docs/dv_columns.json` [A2/A3] — live-fetched
+  (`confirmed: true`): 18 `external_system_ids` cols + 32 `consumer_pii` cols
+  (`datastream_metadata` STRUCT → `NULL`).
+- "Match BQ + warn": seed columns not in the live `external_system_ids` table
+  (`recordstatus`, `country_iso_3166_1`, `consumersourcekey`) are dropped and noted in a leading
+  `-- Dropped seed column(s)…` comment.
 - The existence key is `lucid` (+ optional `consumerkey`/`signature`/`isocountry`) [A4].
 - The agent never runs writes; `mockdata/` is gitignored — never stage it.

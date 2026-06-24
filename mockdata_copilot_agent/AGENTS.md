@@ -101,11 +101,14 @@ All confirmed by the user on **2026-06-24**:
   BOOL, and bare `NULL` for empty cells. **No** Postgres `::uuid` / `::timestamptz` casts. The
   generated SQL is run **manually** against BigQuery; the agent only presents it.
 - **[A2 / A3] DV column types** are TYPE-DRIVEN from `.docs/dv_columns.json`, acquired via the
-  live `INFORMATION_SCHEMA.COLUMNS` fetch. **Note:** the current `dv_columns.json` is a
-  `confirmed: false` fallback (types inferred from `schema.json` + the `.docs` sample because ADC
-  was unavailable / the active account is not `@loreal.com`). **Re-run the `INFORMATION_SCHEMA`
-  fetch with ADC under a `@loreal.com` account before production** so generated INSERTs use the
-  real DV column types.
+  live `INFORMATION_SCHEMA.COLUMNS` fetch (`confirmed: true`, 2026-06-24, under a `@loreal.com`
+  account): **18** `external_system_ids` columns + **32** `consumer_pii` columns (including a
+  `datastream_metadata` STRUCT, which renders as `NULL`). Re-run the fetch if the DV schema
+  changes.
+- **[Schema match — "Match BQ + warn"]** Generation is driven by the live `external_system_ids`
+  schema (18 cols). Seed keys not in that table — `recordstatus` and `country_iso_3166_1` (both
+  live on `consumer_pii`) and `consumersourcekey` (in neither) — are **dropped** from the INSERT
+  and listed in a leading `-- Dropped seed column(s)…` comment so the user sees what was removed.
 - **[A4] Existence key = `lucid`** (+ optional `consumerkey`/`signature`/`isocountry`
   disambiguators), because `lucid` is not unique across brands.
 

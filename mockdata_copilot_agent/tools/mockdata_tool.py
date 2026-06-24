@@ -51,8 +51,12 @@ from pathlib import Path
 _DV_PROJECT = "oa-apmena-spacecds-ap-dv"
 _DV_DATASET = "space_cds_b2c_ds_replica_ase1_dv_public"
 
-# The 21 external_system_ids columns in ordinal order (xlsx header == .docs
-# INSERT column list) [VERIFIED in 02-RESEARCH lines 231-232].
+# Legacy SAMPLE column list (21 cols, from the .docs xlsx/.sql mock-up). This is a
+# FALLBACK ONLY. The authoritative external_system_ids column set is fetched live
+# into .docs/dv_columns.json: the live BigQuery DV table has 18 columns, and the 3
+# trailing sample columns (recordstatus, country_iso_3166_1, consumersourcekey) do
+# NOT exist on it. Generation is schema-driven from dv_columns.json; this tuple is
+# used only when that reference is missing.
 EXTERNAL_SYSTEM_IDS_COLUMNS = (
     "extsystemidskey",
     "consumerkey",
@@ -83,6 +87,9 @@ _DV_COLUMNS_JSON = Path(__file__).resolve().parent.parent / ".docs" / "dv_column
 
 _NUMERIC_TYPES = {"INT64", "INTEGER", "INT", "NUMERIC", "BIGNUMERIC", "FLOAT64", "FLOAT", "DECIMAL"}
 _BOOL_TYPES = {"BOOL", "BOOLEAN"}
+# Complex types have no safe scalar literal — rendered as NULL. The live DV
+# consumer_pii has a datastream_metadata STRUCT<uuid STRING, source_timestamp INT64>.
+_COMPLEX_TYPES = {"STRUCT", "ARRAY", "JSON", "GEOGRAPHY", "RECORD"}
 
 
 def _stderr(msg: str) -> None:
@@ -179,19 +186,25 @@ def _render_value(value, data_type: str) -> str:
     if value is None or value == "":
         return "NULL"
 
-    dt = (data_type or "").upper()
+    # Normalize to the base type token: 'STRING(50)' -> 'STRING',
+    # 'STRUCT<...>' -> 'STRUCT', 'ARRAY<...>' -> 'ARRAY'. The live DV schema uses
+    # parameterized STRING(N) and a datastream_metadata STRUCT.
+    base = (data_type or "").upper().split("(")[0].split("<")[0].strip()
 
-    if dt == "TIMESTAMP":
+    if base in _COMPLEX_TYPES:
+        # No safe scalar literal for STRUCT/ARRAY/JSON/GEOGRAPHY -> NULL.
+        return "NULL"
+    if base == "TIMESTAMP":
         return f"TIMESTAMP {_sq(_normalize_timestamp(value))}"
-    if dt == "DATE":
+    if base == "DATE":
         return f"DATE {_sq(_normalize_date(value))}"
-    if dt == "DATETIME":
+    if base == "DATETIME":
         return f"DATETIME {_sq(_normalize_datetime(value))}"
-    if dt in _BOOL_TYPES:
+    if base in _BOOL_TYPES:
         if isinstance(value, bool):
             return "true" if value else "false"
         return "true" if str(value).strip().lower() in ("true", "1", "t", "yes") else "false"
-    if dt in _NUMERIC_TYPES:
+    if base in _NUMERIC_TYPES:
         # Strip surrounding quotes / whitespace; emit the bare number.
         return str(value).strip().strip("'").strip('"')
 
@@ -252,24 +265,51 @@ def _build_insert(table: str, columns, rows: list, column_types: dict,
     )
 
 
+# Seed columns that appear in the .docs sample/xlsx but are NOT in the live
+# BigQuery external_system_ids table. Per user decision 2026-06-24 ("Match BQ +
+# warn"), these are dropped from generated INSERTs and explained in a comment.
+_SAMPLE_ONLY_NOTES = {
+    "recordstatus": "not in BigQuery external_system_ids (exists on consumer_pii)",
+    "country_iso_3166_1": "not in BigQuery external_system_ids (exists on consumer_pii)",
+    "consumersourcekey": "not in BigQuery external_system_ids or consumer_pii",
+}
+
+
+def _dropped_columns_comment(dropped: list) -> str:
+    """Return a leading GoogleSQL comment block listing seed columns dropped
+    because they are not in the live external_system_ids table (empty string if
+    none). User decision 2026-06-24: Match BQ + warn on extras."""
+    if not dropped:
+        return ""
+    lines = ["-- Dropped seed column(s) not present in BigQuery external_system_ids:"]
+    for col in dropped:
+        note = _SAMPLE_ONLY_NOTES.get(col, "not in BigQuery external_system_ids")
+        lines.append(f"--   {col} — {note}")
+    return "\n".join(lines) + "\n"
+
+
 def generate_external_system_ids(seed: dict, vary: dict, count: int,
                                  column_types: dict | None = None,
+                                 columns: list | None = None,
                                  project: str = _DV_PROJECT,
                                  dataset: str = _DV_DATASET) -> dict:
     """Pure. Generate `count` external_system_ids rows from a seed + variation spec.
 
     Returns {"sql": str, "rows": list[dict], "lucids": list[str],
-             "consumerkeys": list[str]}.
+             "consumerkeys": list[str], "dropped": list[str]}.
 
-    `vary` maps column_name -> value-list (cycled by row index) or scalar
+    Schema-driven: the column set defaults to the live BigQuery DV schema (18 cols)
+    from .docs/dv_columns.json. Seed keys not in that schema (e.g. the sample-only
+    recordstatus / country_iso_3166_1 / consumersourcekey) are DROPPED from the
+    INSERT and explained in a leading comment (user decision 2026-06-24: Match BQ +
+    warn). `vary` maps column_name -> value-list (cycled by row index) or scalar
     (constant). `extsystemidskey` is ALWAYS varied (trailing 12-digit counter ++)
-    regardless of `vary`, to keep the PK unique (A5). `column_types` defaults to
-    load_column_types('external_system_ids'); tests may inject an explicit map.
+    to keep the PK unique (A5). `column_types`/`columns` may be injected for tests.
     NO LLM, NO I/O beyond the columns reference.
     """
     column_types = column_types or load_column_types("external_system_ids")
     vary = vary or {}
-    columns = EXTERNAL_SYSTEM_IDS_COLUMNS
+    columns = columns or _column_order("external_system_ids", EXTERNAL_SYSTEM_IDS_COLUMNS)
 
     seed_key = seed.get("extsystemidskey")
     rows: list[dict] = []
@@ -285,12 +325,16 @@ def generate_external_system_ids(seed: dict, vary: dict, count: int,
             row[col] = _vary_value(strategy, i, seed.get(col))
         rows.append(row)
 
-    sql = _build_insert("external_system_ids", columns, rows, column_types,
-                        project, dataset)
+    # Match BQ + warn: drop seed keys absent from the live schema, note them.
+    dropped = [k for k in seed.keys() if k not in columns]
+    sql_body = _build_insert("external_system_ids", columns, rows, column_types,
+                             project, dataset)
+    sql = _dropped_columns_comment(dropped) + sql_body
 
     lucids = list(dict.fromkeys(r.get("lucid") for r in rows if r.get("lucid")))
     consumerkeys = list(dict.fromkeys(r.get("consumerkey") for r in rows if r.get("consumerkey")))
-    return {"sql": sql, "rows": rows, "lucids": lucids, "consumerkeys": consumerkeys}
+    return {"sql": sql, "rows": rows, "lucids": lucids, "consumerkeys": consumerkeys,
+            "dropped": dropped}
 
 
 def generate_consumer_pii(consumers: list, column_types: dict | None = None,

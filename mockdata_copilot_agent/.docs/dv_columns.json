@@ -1,52 +1,261 @@
 {
   "source": "INFORMATION_SCHEMA.COLUMNS (oa-apmena-spacecds-ap-dv / space_cds_b2c_ds_replica_ase1_dv_public)",
   "acquired": "2026-06-24",
-  "confirmed": false,
-  "note": "[A2/A3] Live DV fetch unavailable (ADC missing / active account is not @loreal.com); types inferred from schema.json + .docs sample. Re-run INFORMATION_SCHEMA with ADC before production.",
+  "confirmed": true,
   "tables": {
     "external_system_ids": [
-      {"name": "extsystemidskey", "data_type": "STRING", "ordinal_position": 1},
-      {"name": "consumerkey", "data_type": "STRING", "ordinal_position": 2},
-      {"name": "isocountry", "data_type": "STRING", "ordinal_position": 3},
-      {"name": "signature", "data_type": "STRING", "ordinal_position": 4},
-      {"name": "lucid", "data_type": "STRING", "ordinal_position": 5},
-      {"name": "sourcesystemid", "data_type": "STRING", "ordinal_position": 6},
-      {"name": "sourceconsumerid", "data_type": "STRING", "ordinal_position": 7},
-      {"name": "creationlocationid", "data_type": "STRING", "ordinal_position": 8},
-      {"name": "locationid", "data_type": "STRING", "ordinal_position": 9},
-      {"name": "creationsalesrepid", "data_type": "STRING", "ordinal_position": 10},
-      {"name": "salesrepid", "data_type": "STRING", "ordinal_position": 11},
-      {"name": "createddatetime", "data_type": "TIMESTAMP", "ordinal_position": 12},
-      {"name": "status", "data_type": "STRING", "ordinal_position": 13},
-      {"name": "lastlogindatetime", "data_type": "TIMESTAMP", "ordinal_position": 14},
-      {"name": "createdsourcesystemid", "data_type": "STRING", "ordinal_position": 15},
-      {"name": "lastupdatedsourcesystemid", "data_type": "STRING", "ordinal_position": 16},
-      {"name": "syscreateddatetime", "data_type": "TIMESTAMP", "ordinal_position": 17},
-      {"name": "sysupdatedatetime", "data_type": "TIMESTAMP", "ordinal_position": 18},
-      {"name": "recordstatus", "data_type": "INT64", "ordinal_position": 19},
-      {"name": "country_iso_3166_1", "data_type": "STRING", "ordinal_position": 20},
-      {"name": "consumersourcekey", "data_type": "STRING", "ordinal_position": 21}
+      {
+        "name": "extsystemidskey",
+        "data_type": "STRING",
+        "ordinal_position": 1
+      },
+      {
+        "name": "consumerkey",
+        "data_type": "STRING",
+        "ordinal_position": 2
+      },
+      {
+        "name": "isocountry",
+        "data_type": "STRING(3)",
+        "ordinal_position": 3
+      },
+      {
+        "name": "signature",
+        "data_type": "STRING(6)",
+        "ordinal_position": 4
+      },
+      {
+        "name": "lucid",
+        "data_type": "STRING(15)",
+        "ordinal_position": 5
+      },
+      {
+        "name": "sourcesystemid",
+        "data_type": "STRING(50)",
+        "ordinal_position": 6
+      },
+      {
+        "name": "sourceconsumerid",
+        "data_type": "STRING(50)",
+        "ordinal_position": 7
+      },
+      {
+        "name": "creationlocationid",
+        "data_type": "STRING(20)",
+        "ordinal_position": 8
+      },
+      {
+        "name": "locationid",
+        "data_type": "STRING(20)",
+        "ordinal_position": 9
+      },
+      {
+        "name": "creationsalesrepid",
+        "data_type": "STRING(15)",
+        "ordinal_position": 10
+      },
+      {
+        "name": "salesrepid",
+        "data_type": "STRING(15)",
+        "ordinal_position": 11
+      },
+      {
+        "name": "createddatetime",
+        "data_type": "TIMESTAMP",
+        "ordinal_position": 12
+      },
+      {
+        "name": "status",
+        "data_type": "STRING(20)",
+        "ordinal_position": 13
+      },
+      {
+        "name": "lastlogindatetime",
+        "data_type": "TIMESTAMP",
+        "ordinal_position": 14
+      },
+      {
+        "name": "createdsourcesystemid",
+        "data_type": "STRING(50)",
+        "ordinal_position": 15
+      },
+      {
+        "name": "lastupdatedsourcesystemid",
+        "data_type": "STRING(50)",
+        "ordinal_position": 16
+      },
+      {
+        "name": "syscreateddatetime",
+        "data_type": "TIMESTAMP",
+        "ordinal_position": 17
+      },
+      {
+        "name": "sysupdatedatetime",
+        "data_type": "TIMESTAMP",
+        "ordinal_position": 18
+      }
     ],
     "consumer_pii": [
-      {"name": "consumerkey", "data_type": "STRING", "ordinal_position": 1},
-      {"name": "isocountry", "data_type": "STRING", "ordinal_position": 2},
-      {"name": "signature", "data_type": "STRING", "ordinal_position": 3},
-      {"name": "lucid", "data_type": "STRING", "ordinal_position": 4},
-      {"name": "status", "data_type": "STRING", "ordinal_position": 5},
-      {"name": "consumertype", "data_type": "STRING", "ordinal_position": 6},
-      {"name": "gender", "data_type": "STRING", "ordinal_position": 7},
-      {"name": "firstname", "data_type": "STRING", "ordinal_position": 8},
-      {"name": "lastname", "data_type": "STRING", "ordinal_position": 9},
-      {"name": "birthyear", "data_type": "STRING", "ordinal_position": 10},
-      {"name": "birthmonth", "data_type": "STRING", "ordinal_position": 11},
-      {"name": "birthday", "data_type": "STRING", "ordinal_position": 12},
-      {"name": "mobile", "data_type": "STRING", "ordinal_position": 13},
-      {"name": "phone", "data_type": "STRING", "ordinal_position": 14},
-      {"name": "email", "data_type": "STRING", "ordinal_position": 15},
-      {"name": "sourcecreationdatetime", "data_type": "TIMESTAMP", "ordinal_position": 16},
-      {"name": "registrationdatetime", "data_type": "TIMESTAMP", "ordinal_position": 17},
-      {"name": "withdrawaldatetime", "data_type": "TIMESTAMP", "ordinal_position": 18},
-      {"name": "recordstatus", "data_type": "INT64", "ordinal_position": 19}
+      {
+        "name": "consumerkey",
+        "data_type": "STRING",
+        "ordinal_position": 1
+      },
+      {
+        "name": "isocountry",
+        "data_type": "STRING(3)",
+        "ordinal_position": 2
+      },
+      {
+        "name": "signature",
+        "data_type": "STRING(6)",
+        "ordinal_position": 3
+      },
+      {
+        "name": "lucid",
+        "data_type": "STRING(15)",
+        "ordinal_position": 4
+      },
+      {
+        "name": "lastupdatedlocationid",
+        "data_type": "STRING(20)",
+        "ordinal_position": 5
+      },
+      {
+        "name": "lastupdatedsalesrepid",
+        "data_type": "STRING(15)",
+        "ordinal_position": 6
+      },
+      {
+        "name": "nationalid",
+        "data_type": "STRING(50)",
+        "ordinal_position": 7
+      },
+      {
+        "name": "nationality",
+        "data_type": "STRING(50)",
+        "ordinal_position": 8
+      },
+      {
+        "name": "status",
+        "data_type": "STRING(20)",
+        "ordinal_position": 9
+      },
+      {
+        "name": "consumertype",
+        "data_type": "STRING(25)",
+        "ordinal_position": 10
+      },
+      {
+        "name": "gender",
+        "data_type": "STRING(20)",
+        "ordinal_position": 11
+      },
+      {
+        "name": "firstname",
+        "data_type": "STRING(50)",
+        "ordinal_position": 12
+      },
+      {
+        "name": "localfirstname",
+        "data_type": "STRING(50)",
+        "ordinal_position": 13
+      },
+      {
+        "name": "lastname",
+        "data_type": "STRING(50)",
+        "ordinal_position": 14
+      },
+      {
+        "name": "locallastname",
+        "data_type": "STRING(50)",
+        "ordinal_position": 15
+      },
+      {
+        "name": "birthyear",
+        "data_type": "STRING(4)",
+        "ordinal_position": 16
+      },
+      {
+        "name": "birthmonth",
+        "data_type": "STRING(2)",
+        "ordinal_position": 17
+      },
+      {
+        "name": "birthday",
+        "data_type": "STRING(2)",
+        "ordinal_position": 18
+      },
+      {
+        "name": "mobile",
+        "data_type": "STRING(40)",
+        "ordinal_position": 19
+      },
+      {
+        "name": "phone",
+        "data_type": "STRING(40)",
+        "ordinal_position": 20
+      },
+      {
+        "name": "email",
+        "data_type": "STRING(255)",
+        "ordinal_position": 21
+      },
+      {
+        "name": "sourcecreationdatetime",
+        "data_type": "TIMESTAMP",
+        "ordinal_position": 22
+      },
+      {
+        "name": "sourcelastupdateddatetime",
+        "data_type": "TIMESTAMP",
+        "ordinal_position": 23
+      },
+      {
+        "name": "registrationdatetime",
+        "data_type": "TIMESTAMP",
+        "ordinal_position": 24
+      },
+      {
+        "name": "withdrawaldatetime",
+        "data_type": "TIMESTAMP",
+        "ordinal_position": 25
+      },
+      {
+        "name": "createdsourcesystemid",
+        "data_type": "STRING(50)",
+        "ordinal_position": 26
+      },
+      {
+        "name": "lastupdatedsourcesystemid",
+        "data_type": "STRING(50)",
+        "ordinal_position": 27
+      },
+      {
+        "name": "syscreateddatetime",
+        "data_type": "TIMESTAMP",
+        "ordinal_position": 28
+      },
+      {
+        "name": "sysupdatedatetime",
+        "data_type": "TIMESTAMP",
+        "ordinal_position": 29
+      },
+      {
+        "name": "recordstatus",
+        "data_type": "INT64",
+        "ordinal_position": 30
+      },
+      {
+        "name": "country_iso_3166_1",
+        "data_type": "INT64",
+        "ordinal_position": 31
+      },
+      {
+        "name": "datastream_metadata",
+        "data_type": "STRUCT<uuid STRING, source_timestamp INT64>",
+        "ordinal_position": 32
+      }
     ]
   }
 }
