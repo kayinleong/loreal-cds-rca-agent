@@ -3,7 +3,7 @@
 - session: claude-code
 - branch: feature/rca-agent
 - started: 2026-06-24
-- status: in-progress
+- status: done
 - summary: Build mockdata_copilot_agent — a Copilot-only agent that, on each prompt, ensures L'Oréal GCP login, generates mock INSERT rows for external_system_ids (seeded from a user-provided row + variation intent), looks up the consumer in consumer_pii and generates a mock consumer_pii row when absent, then writes the generated SQL to mockdata/<MMDDYYSS>.md and presents it to the user.
 
 ## What Will Change
@@ -32,13 +32,26 @@ Executed 2026-06-24 — all 5 waves built + committed (offline-verified). `mockd
 
 **Deviation (auto-applied):** `ensure_gcloud_auth` made **lazy** (only `ensure_login`/`lookup_consumer` invoke it) instead of unconditional startup, so `--help` and offline tools don't hang when ADC is absent. `BQ_PROJECT=DV` is still set from config before any auth.
 
-## Status detail / outstanding
+## Post-execution refinement (2026-06-24, after `@loreal.com` login)
 
-- **Live schema re-fetch pending:** `.docs/dv_columns.json` is `confirmed:false` (inferred types) — ADC was unavailable and the active gcloud account is `@accenture.com`. After `gcloud auth application-default login` with a `@loreal.com` account, re-run the `INFORMATION_SCHEMA.COLUMNS` fetch to upgrade to `confirmed:true`. (Generator is type-driven, so corrections propagate automatically.)
-- **Human-verify checkpoint pending:** A1 GoogleSQL dialect, A2/A3 re-fetched columns, A4 `lucid` key — user sign-off.
-- **Live `lookup_consumer` path untested** (no ADC).
+- **Live schema fetched (`confirmed:true`):** ran `INFORMATION_SCHEMA.COLUMNS` against the DV
+  dataset; `.docs/dv_columns.json` now holds the real schema — **18** `external_system_ids`
+  columns + **32** `consumer_pii` columns (incl. a `datastream_metadata` STRUCT).
+- **Discovery + user decision:** the live `external_system_ids` table has 18 cols, but the
+  `.docs` sample has 21 — `recordstatus`/`country_iso_3166_1` live on `consumer_pii`,
+  `consumersourcekey` is in neither. User chose **"Match BQ + warn"**.
+- **Generator refactored:** `mockdata_tool.py` is now schema-driven from `dv_columns.json` — emits
+  the live 18 esi columns, drops sample-only columns with a leading `-- Dropped seed column(s)…`
+  comment, normalizes parameterized types (`STRING(50)`→STRING), and renders STRUCT/complex
+  columns as `NULL`.
+- **All confirmed:** A1 GoogleSQL ✓, A2/A3 live columns ✓, A4 `lucid` ✓, Match-BQ+warn ✓.
 
 ## Verification
+
+### Live paths verified (post @loreal.com login)
+- `INFORMATION_SCHEMA.COLUMNS` fetch against the DV dataset succeeded → real schema written to `dv_columns.json` (`confirmed:true`).
+- Live `consumer_pii` existence lookup (`build_lookup_sql` → `query_bigquery`) executed against the real DV table, returned "Query returned 0 rows" → absence correctly detected (would trigger `consumer_pii` generation). Read path + absence heuristic confirmed end-to-end.
+- Refactored generator re-verified: 18-col esi INSERT with 3 sample-only columns dropped + warned, 32-col `consumer_pii` INSERT with `datastream_metadata` STRUCT → NULL, `TIMESTAMP '…'` literals, no `::` casts, lookup blocklist-clean; CLI `generate_mockdata` end-to-end PASS.
 
 ### What was tested (offline, no credentials)
 - Independent orchestrator smoke from repo root: 21-column constant; `generate_external_system_ids` → fully-qualified backtick GoogleSQL `INSERT`, `TIMESTAMP '…+00'` literals, NO `::uuid`/`::timestamptz`, bare `NULL`, `MOCK_DATA`/`MANUAL`, 3 unique `extsystemidskey`.
@@ -57,4 +70,4 @@ All offline verifies for waves 1–5 + the independent smoke.
 ### Regression Report
 - Surface touched: only NEW files under `mockdata_copilot_agent/` + additive `.gitignore`/`.claude/skills/`/`.github/agents/` entries. `rca_copilot_agent/` and `ticketasg_copilot_agent/` source NOT modified — `grep` confirms zero cross-package imports (the one hit is a comment, not an import). Pre-existing unrelated working-tree mods (`ticketasg_copilot_agent/retrieval_index.npz`, `email_tool.py`) were never staged. BigQuery blocklist unchanged and verified still blocking. No secrets introduced; `mockdata/` gitignored.
 
-status remains `in-progress` until the live re-fetch + human checkpoint close out.
+Phase `done`: agent built, live DV schema fetched + applied, all user decisions (A1/A2/A3/A4 + Match-BQ) resolved, and all paths (offline generation, live schema fetch, live lookup, blocklist, CLI) verified. Optional follow-up: dry-run a generated INSERT in BigQuery before bulk use.
