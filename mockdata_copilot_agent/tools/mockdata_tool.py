@@ -230,16 +230,54 @@ def _bump_extsystemidskey(key: str, offset: int) -> str:
     return f"{prefix}{counter + offset:012d}"
 
 
+def _increment_suffix(value, offset: int):
+    """Auto-increment the trailing counter of an ID-like value by `offset`.
+
+    - trailing digit run -> numeric increment, zero-padded to the same width
+      (e.g. 'ID0370' + 2 -> 'ID0372')
+    - trailing letter    -> letter increment within A-Z / a-z, wrapping at the end
+      (e.g. 'ID011000000001C' + 1 -> 'ID011000000001D')
+    - otherwise          -> append '-<offset>' so generated values stay distinct
+
+    None / empty seed values and offset 0 are returned unchanged.
+    """
+    if value is None or value == "" or offset == 0:
+        return value
+    s = str(value)
+    m = re.search(r"(\d+)$", s)
+    if m:
+        digits = m.group(1)
+        return s[: m.start()] + str(int(digits) + offset).zfill(len(digits))
+    m = re.search(r"([A-Za-z])$", s)
+    if m:
+        ch = m.group(1)
+        base = ord("A") if ch.isupper() else ord("a")
+        return s[:-1] + chr((ord(ch) - base + offset) % 26 + base)
+    return f"{s}-{offset}"
+
+
 def _vary_value(strategy, row_index: int, seed_value):
     """Resolve a `vary` strategy for a given row index.
 
-    - list  -> cycle by row index
-    - scalar (str/int) -> used verbatim for every row (deterministic constant)
+    Supported strategies:
+      - list / tuple  -> cycle the values by row index
+      - "increment"   -> auto-bump the seed value's trailing number/letter per row
+      - other non-string scalar -> used verbatim as a constant for every row
+
+    A bare string other than "increment" raises ValueError, so a typo'd strategy
+    (e.g. "incrment") fails loudly instead of being emitted as a literal value.
     """
     if isinstance(strategy, (list, tuple)):
         if not strategy:
             return seed_value
         return strategy[row_index % len(strategy)]
+    if isinstance(strategy, str):
+        if strategy.lower() == "increment":
+            return _increment_suffix(seed_value, row_index)
+        raise ValueError(
+            f"unknown vary strategy {strategy!r}; use a list of values or the "
+            "'increment' keyword"
+        )
     return strategy
 
 
@@ -302,9 +340,11 @@ def generate_external_system_ids(seed: dict, vary: dict, count: int,
     from .docs/dv_columns.json. Seed keys not in that schema (e.g. the sample-only
     recordstatus / country_iso_3166_1 / consumersourcekey) are DROPPED from the
     INSERT and explained in a leading comment (user decision 2026-06-24: Match BQ +
-    warn). `vary` maps column_name -> value-list (cycled by row index) or scalar
-    (constant). `extsystemidskey` is ALWAYS varied (trailing 12-digit counter ++)
-    to keep the PK unique (A5). `column_types`/`columns` may be injected for tests.
+    warn). `vary` maps column_name -> a list of values (cycled by row index) or the
+    string "increment" (auto-bump the seed value's trailing number/letter per row);
+    any other bare string raises ValueError (no silent literals). `extsystemidskey`
+    is ALWAYS varied (trailing 12-digit counter ++) to keep the PK unique (A5).
+    `column_types`/`columns` may be injected for tests.
     NO LLM, NO I/O beyond the columns reference.
     """
     column_types = column_types or load_column_types("external_system_ids")

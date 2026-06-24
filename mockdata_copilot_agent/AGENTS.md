@@ -90,6 +90,17 @@ python mockdata_copilot_agent/run_tool.py save_mockdata_report --json '{"prompt"
 **For GitHub Copilot users:** the `.github/agents/mockdata_copilot.agent.md` agent definition uses
 `run_in_terminal` to call `run_tool.py` — no MCP server required.
 
+### Variation (`vary`) contract
+
+`vary` maps a column name to one of:
+- a **list of values** — cycled by row index (use a single-element list for a constant);
+- the string **`"increment"`** — auto-bumps the seed value's trailing number or letter per row
+  (e.g. `ID011000000001C → …D → …E`, or `ID0370 → ID0371`).
+
+Any other bare string raises a `ValueError` (so a typo like `"incrment"` fails loudly instead of
+being emitted as a literal value). `extsystemidskey` is always auto-incremented regardless of
+`vary` to keep the PK unique.
+
 ## Confirmed Decisions
 
 All confirmed by the user on **2026-06-24**:

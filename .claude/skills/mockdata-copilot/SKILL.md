@@ -57,9 +57,11 @@ command. You NEVER run the generated INSERTs.
 Notes on arguments:
 
 - `generate_mockdata` requires `seed`, `vary`, and `count`. `vary` maps a column name to a
-  value-list (cycled per row) or a scalar (constant). `extsystemidskey` is always varied
-  automatically to keep the PK unique. Pass `absent_lucids` (an array) on a second call to add a
-  `consumer_pii_sql` block for consumers you confirmed missing.
+  **list of values** (cycled per row) or the string **`"increment"`** (auto-bumps the seed value's
+  trailing number/letter per row, e.g. `…001C → …001D`). Any other bare string raises an error —
+  use a list for constants. `extsystemidskey` is always varied automatically to keep the PK
+  unique. Pass `absent_lucids` (an array) on a second call to add a `consumer_pii_sql` block for
+  consumers you confirmed missing.
 - `lookup_consumer` requires `lucid`; `consumerkey`, `signature`, `isocountry` are optional
   disambiguators. Returns `{lucid, exists, result}`.
 - `save_mockdata_report` requires `prompt`, `external_sql`, and `summary`; `consumer_sql` is

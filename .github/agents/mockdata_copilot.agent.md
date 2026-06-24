@@ -45,8 +45,9 @@ GCP target: project `oa-apmena-spacecds-ap-dv`, dataset `space_cds_b2c_ds_replic
 | **Save report (MANDATORY)** | `run_tool.py save_mockdata_report --json '{"prompt": "...", "external_sql": "...", "consumer_sql": "...", "summary": "..."}'` |
 
 Notes:
-- `generate_mockdata` requires `seed`, `vary`, `count`. `vary` maps a column → value-list
-  (cycled per row) or scalar (constant); `extsystemidskey` is always varied automatically. Pass
+- `generate_mockdata` requires `seed`, `vary`, `count`. `vary` maps a column → a **list** (cycled
+  per row) or `"increment"` (auto-bump the trailing number/letter per row); any other bare string
+  errors — use a list for constants. `extsystemidskey` is always varied automatically. Pass
   `absent_lucids` (array) on a second call to add a `consumer_pii_sql` block.
 - `lookup_consumer` requires `lucid` (+ optional `consumerkey`/`signature`/`isocountry`); returns
   `{lucid, exists, result}`.
