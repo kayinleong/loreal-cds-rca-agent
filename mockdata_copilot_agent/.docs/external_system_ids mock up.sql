@@ -1,0 +1,40 @@
+INSERT INTO external_system_ids (
+    extsystemidskey,
+    consumerkey,
+    isocountry,
+    signature,
+    lucid,
+    sourcesystemid,
+    sourceconsumerid,
+    creationlocationid,
+    locationid,
+    creationsalesrepid,
+    salesrepid,
+    createddatetime,
+    status,
+    lastlogindatetime,
+    createdsourcesystemid,
+    lastupdatedsourcesystemid,
+    syscreateddatetime,
+    sysupdatedatetime,
+    recordstatus,
+    country_iso_3166_1,
+    consumersourcekey
+) VALUES
+    -- VN entries
+    ('1b48bdbb-bdbb-7b6f-0001-000000000011'::uuid, '6d74baaa-baaa-7a19-899c-000000000011'::uuid, 'VN', '45', 'C2VN00000000010', 'MARS_VN', 'VN011000000001A', 'VN0370', NULL, 'VNPGE450000', '1', '1900-01-01 00:00:00+00'::timestamptz, 'Inactive', NULL, 'MOCK_DATA', 'MANUAL', '2026-06-19 00:00:00+00'::timestamptz, '2026-06-19 00:00:00+00'::timestamptz, '0', '704', '525699'),
+    ('1b48bdbb-bdbb-7b6f-0001-000000000012'::uuid, '6d74baaa-baaa-7a19-899c-000000000011'::uuid, 'VN', '45', 'C2VN00000000010', 'MARS_VN', 'VN011000000001B', 'VN0160', NULL, 'VNPGE450000', '1', '1900-01-01 00:00:00+00'::timestamptz, 'Active',   NULL, 'MOCK_DATA', 'MANUAL', '2026-06-19 00:00:00+00'::timestamptz, '2026-06-19 00:00:00+00'::timestamptz, '0', '704', '525704'),
+    ('1b48bdbb-bdbb-7b6f-0001-000000000013'::uuid, '6d74baaa-baaa-7a19-899c-000000000012'::uuid, 'VN', '01', 'C2VN00000000010', 'MARS_VN', 'VN011000000001C', 'VN0160', NULL, 'VNPGE450000', '0', '1900-01-01 00:00:00+00'::timestamptz, 'Active',   NULL, 'MOCK_DATA', 'MANUAL', '2026-06-19 00:00:00+00'::timestamptz, '2026-06-19 00:00:00+00'::timestamptz, '0', '704', '526979'),
+    ('1b48bdbb-bdbb-7b6f-0002-000000000021'::uuid, '6d74baaa-baaa-7a19-899c-000000000021'::uuid, 'VN', '24', 'C2VN00000000020', 'MARS_VN', 'VN021000000001A', 'VN0370', NULL, 'VNPGE450000', '1', '1900-01-01 00:00:00+00'::timestamptz, 'Inactive', NULL, 'MOCK_DATA', 'MANUAL', '2026-06-19 00:00:00+00'::timestamptz, '2026-06-19 00:00:00+00'::timestamptz, '0', '704', '525699'),
+    ('1b48bdbb-bdbb-7b6f-0002-000000000022'::uuid, '6d74baaa-baaa-7a19-899c-000000000021'::uuid, 'VN', '24', 'C2VN00000000020', 'MARS_VN', 'VN021000000001B', 'VN0160', NULL, 'VNPGE450000', '1', '1900-01-01 00:00:00+00'::timestamptz, 'Active',   NULL, 'MOCK_DATA', 'MANUAL', '2026-06-19 00:00:00+00'::timestamptz, '2026-06-19 00:00:00+00'::timestamptz, '0', '704', '525704'),
+    -- ID entries
+    ('1b48bdbb-bdbb-7b6f-0003-000000000031'::uuid, '6d74baaa-baaa-7a19-899c-000000000031'::uuid, 'ID', '45', 'C2ID00000000010', 'MARS_ID', 'ID011000000001A', 'ID0370', NULL, 'IDPGE450000', '1',  '1900-01-01 00:00:00+00'::timestamptz, 'Inactive', NULL, 'MOCK_DATA', 'MANUAL', '2026-06-19 00:00:00+00'::timestamptz, '2026-06-19 00:00:00+00'::timestamptz, '0', '360', '525699'),
+    ('1b48bdbb-bdbb-7b6f-0003-000000000032'::uuid, '6d74baaa-baaa-7a19-899c-000000000031'::uuid, 'ID', '45', 'C2ID00000000010', 'MARS_ID', 'ID011000000001B', 'ID0160', NULL, 'IDPGE450000', '1',  '1900-01-01 00:00:00+00'::timestamptz, 'Active',   NULL, 'MOCK_DATA', 'MANUAL', '2026-06-19 00:00:00+00'::timestamptz, '2026-06-19 00:00:00+00'::timestamptz, '0', '360', '525704'),
+    ('1b48bdbb-bdbb-7b6f-0003-000000000034'::uuid, '6d74baaa-baaa-7a19-899c-000000000031'::uuid, 'ID', '45', 'C2ID00000000010', 'SHP_ASEAN', 'ID011000000001D', 'ID0160', NULL, 'IDPGE450000', '1',  '1900-01-01 00:00:00+00'::timestamptz, 'Active',   NULL, 'MOCK_DATA', 'MANUAL', '2026-06-19 00:00:00+00'::timestamptz, '2026-06-19 00:00:00+00'::timestamptz, '0', '360', '525704'),
+    ('1b48bdbb-bdbb-7b6f-0003-000000000033'::uuid, '6d74baaa-baaa-7a19-899c-000000000032'::uuid, 'ID', '01', 'C2ID00000000010', 'MARS_ID', 'ID011000000001C', 'ID0160', NULL, 'IDPGE450000', '0',  '1900-01-01 00:00:00+00'::timestamptz, 'Active',   NULL, 'MOCK_DATA', 'MANUAL', '2026-06-19 00:00:00+00'::timestamptz, '2026-06-19 00:00:00+00'::timestamptz, '0', '360', '526979'),
+    -- TH entries
+    ('1b48bdbb-bdbb-7b6f-0004-000000000041'::uuid, '6d74baaa-baaa-7a19-899c-000000000041'::uuid, 'TH', '45', 'C2TH00000000010', 'MARS_TH', 'TH011000000001A', 'TH0370', NULL, 'THPGE450000', '1', '1900-01-01 00:00:00+00'::timestamptz, 'Inactive', NULL, 'MOCK_DATA', 'MANUAL', '2026-06-19 00:00:00+00'::timestamptz, '2026-06-19 00:00:00+00'::timestamptz, '0', '764', '525699'),
+    ('1b48bdbb-bdbb-7b6f-0004-000000000042'::uuid, '6d74baaa-baaa-7a19-899c-000000000041'::uuid, 'TH', '45', 'C2TH00000000010', 'MARS_TH', 'TH011000000001B', 'TH0160', NULL, 'THPGE450000', '1', '1900-01-01 00:00:00+00'::timestamptz, 'Active',   NULL, 'MOCK_DATA', 'MANUAL', '2026-06-19 00:00:00+00'::timestamptz, '2026-06-19 00:00:00+00'::timestamptz, '0', '764', '525704'),
+    ('1b48bdbb-bdbb-7b6f-0004-000000000043'::uuid, '6d74baaa-baaa-7a19-899c-000000000042'::uuid, 'TH', '01', 'C2TH00000000010', 'MARS_TH', 'TH011000000001C', 'TH0160', NULL, 'THPGE450000', '0', '1900-01-01 00:00:00+00'::timestamptz, 'Active',   NULL, 'MOCK_DATA', 'MANUAL', '2026-06-19 00:00:00+00'::timestamptz, '2026-06-19 00:00:00+00'::timestamptz, '0', '764', '526979'),
+    ('1b48bdbb-bdbb-7b6f-0005-000000000051'::uuid, '6d74baaa-baaa-7a19-899c-000000000051'::uuid, 'TH', '24', 'C2TH00000000020', 'MARS_TH', 'TH021000000001A', 'TH0370', NULL, 'THPGE450000', '1', '1900-01-01 00:00:00+00'::timestamptz, 'Inactive', NULL, 'MOCK_DATA', 'MANUAL', '2026-06-19 00:00:00+00'::timestamptz, '2026-06-19 00:00:00+00'::timestamptz, '0', '764', '525699'),
+    ('1b48bdbb-bdbb-7b6f-0005-000000000052'::uuid, '6d74baaa-baaa-7a19-899c-000000000051'::uuid, 'TH', '24', 'C2TH00000000020', 'MARS_TH', 'TH021000000001B', 'TH0160', NULL, 'THPGE450000', '1', '1900-01-01 00:00:00+00'::timestamptz, 'Active',   NULL, 'MOCK_DATA', 'MANUAL', '2026-06-19 00:00:00+00'::timestamptz, '2026-06-19 00:00:00+00'::timestamptz, '0', '764', '525704');
