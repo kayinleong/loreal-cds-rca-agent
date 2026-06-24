@@ -38,7 +38,7 @@ This agent mirrors the established Copilot-agent shape of `rca_copilot_agent/` a
 - **DROP** all ServiceNow surface: no `auth_tool.py`, `snow_reader.py`, `incident_store.py`; no `COOKIE`/`X_USERTOKEN`; no SMTP/email tool (not requested).
 
 ### Mock-data generation
-- A pure-function tool (e.g. `mockdata_tool.py`) takes a **seed row** + a **variation spec** (columns to vary, row count) and emits `INSERT INTO external_system_ids (...) VALUES (...)` statements that match the `.docs` `.sql` sample style: `::uuid` / `::timestamptz` casts, `MOCK_DATA` / `MANUAL` markers, the recognizable synthetic UUID family (`1b48bdbb-bdbb-7b6f-XXXX-XXXXXXXXXXXX`, `6d74baaa-baaa-7a19-899c-XXXXXXXXXXXX`), `NULL` for empty cells.
+- A pure-function tool (e.g. `mockdata_tool.py`) takes a **seed row** + a **variation spec** (columns to vary, row count) and emits **BigQuery GoogleSQL** `INSERT INTO \`<project>.<dataset>.external_system_ids\` (...) VALUES (...)` statements (A1 confirmed 2026-06-24: GoogleSQL targeting the DV dataset, NOT the `.docs` sample's Postgres `::uuid`/`::timestamptz` casts). Preserves the `MOCK_DATA` / `MANUAL` markers, the recognizable synthetic UUID family (`1b48bdbb-bdbb-7b6f-XXXX-XXXXXXXXXXXX`, `6d74baaa-baaa-7a19-899c-XXXXXXXXXXXX`), and `NULL` for empty cells. Value quoting is driven by each column's real BigQuery type.
 - Output file: `mockdata/<MMDDYYSS>.md` containing the originating prompt, the generated external_system_ids SQL, any generated consumer_pii SQL, and a short summary. (`SS` = a 2-digit suffix to disambiguate multiple files in the same day; planner to define collision handling.)
 
 ### consumer_pii dependency
@@ -85,7 +85,7 @@ This agent mirrors the established Copilot-agent shape of `rca_copilot_agent/` a
 ## Specific Ideas
 
 - Worked example from the user: prompt = "create mock data for me with different signature and sourceconsumerid"; seed = the single xlsx row (`1b48bdbb-…-0003-000000000033`, `6d74baaa-…-899c-000000000032`, ISO `ID`, …); expected output = several external_system_ids rows cloned from the seed with `signature` and `sourceconsumerid` varied, row count taken from the prompt.
-- Generated SQL must stay valid GoogleSQL/Postgres-style consistent with the `.docs` `.sql` (the sample uses `::uuid` / `::timestamptz` Postgres casts — planner to confirm the target dialect for the DV replica and match it).
+- Generated SQL must be valid **BigQuery GoogleSQL** for the DV dataset (A1 confirmed by user 2026-06-24). The `.docs` `.sql` sample is Postgres-dialect and is used only as the column/value reference, not the output dialect. Correct GoogleSQL requires real column types, so the agent fetches `external_system_ids` + `consumer_pii` types from `INFORMATION_SCHEMA` once and pins them in `.docs/dv_columns.json`.
 </specifics>
 
 <deferred>

@@ -205,7 +205,7 @@ print('SELECT passes, INSERT blocked:', bad_err)
 
 | Boundary | Description |
 |----------|-------------|
-| generated SQL → query_bigquery | Generated INSERTs are Postgres-dialect AND blocklist-rejected; they must never be routed through the BQ tool — only the read-only existence SELECT goes through it |
+| generated SQL → query_bigquery | Generated INSERTs are GoogleSQL AND blocklist-rejected; they must never be routed through the BQ tool — only the read-only existence SELECT goes through it |
 | DV BigQuery dataset → bigquery_tool | Live read-only SELECT via ADC; IAM grants dataViewer + jobUser only |
 | BQ_PROJECT env → set_project/set_quota_project | Project id sourced from config at startup; non-secret value |
 

@@ -46,8 +46,9 @@ Output: 2 files — `mcp_server.py`, `run_tool.py`.
 - [A6 — filename]: `MMDDYYSS` = `MM`+`DD`+`YY` + 2-digit sequence (00-99), NOT literal seconds;
   collision-safe by scanning existing same-day files. Fallback `MMDDYY_HHMMSS.md` if 00-99
   exhaust.
-- [A1 — dialect]: the report header carries an A1 `[USER-CONFIRM]` note that generated INSERTs
-  are Postgres-dialect for the source/staging DB, not BigQuery.
+- [A1 — dialect: GoogleSQL — CONFIRMED 2026-06-24]: the report header notes that generated
+  INSERTs are BigQuery GoogleSQL for the DV dataset; the agent does not execute writes — the user
+  runs them against BigQuery.
 </objective>
 
 <execution_context>
@@ -195,9 +196,9 @@ these 4 Tool objects (inputSchema per the interfaces table):
   `args["external_sql"]` block); `## consumer_pii` (`args.get("consumer_sql")` if present, else
   the literal line "No consumer_pii rows needed — all consumers already exist."); `## Summary`
   (`args["summary"]`) followed by the mandatory reminder line:
-  "Review and run these INSERTs manually against the Postgres source DB. This agent does not
-  execute writes." Also include an `[A1 USER-CONFIRM]` note that the dialect is Postgres
-  (`::uuid`/`::timestamptz`), matching the `.docs` sample, not BigQuery GoogleSQL.
+  "Review and run these INSERTs manually against the BigQuery DV dataset
+  (oa-apmena-spacecds-ap-dv.space_cds_b2c_ds_replica_ase1_dv_public). This agent does not execute
+  writes." Also include a note that the dialect is BigQuery GoogleSQL [A1 confirmed 2026-06-24].
   Return `f"Mock data report saved: {path}"`.
 
 **7. `_run_jsonrpc_fallback(output_dir)`** — copy the analog's structure; tool name list = the 4
@@ -368,7 +369,7 @@ because `sys.path.insert(0, str(Path(__file__).resolve().parent))` puts the pack
 From repo root:
 1. `python mockdata_copilot_agent/run_tool.py --help` — exits 0, prints "mockdata_copilot_agent"
 2. `python -c "import sys, asyncio; sys.path.insert(0,'mockdata_copilot_agent'); from mcp_server import _dispatch; assert 'Unknown tool' in asyncio.run(_dispatch('nope',{},'/tmp'))"` — exits 0
-3. `python mockdata_copilot_agent/run_tool.py generate_mockdata --json '{"seed": {"extsystemidskey":"1b48bdbb-bdbb-7b6f-0003-000000000033","consumerkey":"6d74baaa-baaa-7a19-899c-000000000032","isocountry":"ID","signature":1,"lucid":"C2ID00000000010","createddatetime":"1900-01-01T00:00:00Z","createdsourcesystemid":"MOCK_DATA","lastupdatedsourcesystemid":"MANUAL"}, "vary": {"signature": ["45","01"]}, "count": 2}' | python -c "import sys,json; d=json.load(sys.stdin); assert d['external_system_ids_sql'].startswith('INSERT INTO external_system_ids ('); print('PASS')"` — prints PASS
+3. `python mockdata_copilot_agent/run_tool.py generate_mockdata --json '{"seed": {"extsystemidskey":"1b48bdbb-bdbb-7b6f-0003-000000000033","consumerkey":"6d74baaa-baaa-7a19-899c-000000000032","isocountry":"ID","signature":1,"lucid":"C2ID00000000010","createddatetime":"1900-01-01T00:00:00Z","createdsourcesystemid":"MOCK_DATA","lastupdatedsourcesystemid":"MANUAL"}, "vary": {"signature": ["45","01"]}, "count": 2}' | python -c "import sys,json; d=json.load(sys.stdin); assert d['external_system_ids_sql'].startswith('INSERT INTO'); assert 'space_cds_b2c_ds_replica_ase1_dv_public.external_system_ids' in d['external_system_ids_sql']; print('PASS')"` — prints PASS
 4. `grep -c "mockdata-copilot" mockdata_copilot_agent/mcp_server.py` — returns >= 2
 5. `grep -c "ensure_credentials\|load_store\|SMTP\|send_.*email" mockdata_copilot_agent/mcp_server.py mockdata_copilot_agent/run_tool.py` — returns 0 for both files
 </verification>

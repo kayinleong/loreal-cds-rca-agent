@@ -37,11 +37,12 @@ Output: 3 files — `mockdata_copilot_agent/AGENTS.md`,
 - Companion invocation: `/mockdata-copilot` (SKILL) and the GitHub agent definition
 - No new code, no new config — verification + docs only
 
-## Assumptions restated for the user checkpoint (do NOT drop)
-- [A1] dialect = Postgres (`::uuid`/`::timestamptz`) matching the `.docs` sample — confirm the
-  generated INSERTs run against the Postgres source/staging DB, not BigQuery.
-- [A2/A3] full DV `consumer_pii` columns — confirm `.docs/consumer_pii.columns.json` is
-  live-acquired (`confirmed: true`); if `false`, re-run with ADC before production.
+## Confirmed decisions restated for the user checkpoint (do NOT drop)
+- [A1 — CONFIRMED 2026-06-24] dialect = BigQuery GoogleSQL targeting the DV dataset — generated
+  INSERTs run against BigQuery; the agent presents them only (never executes writes).
+- [A2/A3 — CONFIRMED: live fetch] full DV column metadata for both tables — confirm
+  `.docs/dv_columns.json` is live-acquired (`confirmed: true`); if `false`, re-run with ADC
+  before production.
 - [A4] existence key = `lucid` (+ optional `consumerkey`/`signature`/`isocountry`) — confirm
   lucid disambiguation is sufficient for the DV table.
 </objective>
@@ -107,10 +108,13 @@ ServiceNow/assignment content with mock-data content. Sections:
     NO COOKIE/X_USERTOKEN, NO SMTP.
   - `## Mock-Data Workflow` — the 6-step Mandatory Sequence from the interfaces block.
   - `## Running Without MCP (Skills / CLI Mode)` — the 4 `run_tool.py` example commands.
-  - `## Assumptions to confirm` — A1 (Postgres dialect), A2/A3 (DV consumer_pii columns), A4
-    (existence key = lucid). Each flagged `[USER-CONFIRM]`.
-  - A closing reminder block: "This agent presents SQL only. Review and run the generated
-    INSERTs manually against the Postgres source DB. mockdata/ is gitignored — never stage it."
+  - `## Confirmed Decisions` — A1 (BigQuery GoogleSQL targeting the DV dataset), A2/A3 (DV column
+    metadata via live INFORMATION_SCHEMA fetch), A4 (existence key = lucid). All confirmed
+    2026-06-24.
+  - A closing reminder block: "This agent presents SQL only. Review and run the generated INSERTs
+    manually against the BigQuery DV dataset
+    (oa-apmena-spacecds-ap-dv.space_cds_b2c_ds_replica_ase1_dv_public). mockdata/ is gitignored —
+    never stage it."
 
 **Create `.claude/skills/mockdata-copilot/SKILL.md`** — YAML frontmatter EXACTLY:
 ```yaml
@@ -141,7 +145,7 @@ Body sections (mirror ticketasg SKILL.md):
   - `## Output Rules` — present the generated SQL; ALWAYS append `Report saved: <path>`; never
     claim the SQL was executed; show the "review & run manually" reminder.
   - `## Analysis Rules` — only use data from Bash tool outputs; synthetic fake PII only; the
-    generated INSERTs are Postgres-dialect [A1 USER-CONFIRM]; the agent never runs writes.
+    generated INSERTs are BigQuery GoogleSQL [A1 confirmed]; the agent never runs writes.
 
 **Create `.github/agents/mockdata_copilot.agent.md`** — YAML frontmatter EXACTLY (NO
 `invocation` key — agent.md omits it per phase-01):
@@ -226,7 +230,7 @@ mockdata_copilot_agent/tools/__init__.py
 mockdata_copilot_agent/tools/gcloud_tool.py
 mockdata_copilot_agent/tools/bigquery_tool.py
 mockdata_copilot_agent/tools/mockdata_tool.py
-mockdata_copilot_agent/.docs/consumer_pii.columns.json
+mockdata_copilot_agent/.docs/dv_columns.json
 mockdata_copilot_agent/AGENTS.md
 ```
 plus `.claude/skills/mockdata-copilot/SKILL.md` and `.github/agents/mockdata_copilot.agent.md`.
@@ -254,7 +258,7 @@ record as "manual/skipped" in the SUMMARY.
   </action>
   <verify>
     <automated>cd "/Users/ka.yin.leong/Documents/Accenture Development/Loreal L2L3 Agents" && \
-for f in mockdata_copilot_agent/__init__.py mockdata_copilot_agent/config.py mockdata_copilot_agent/mcp_server.py mockdata_copilot_agent/run_tool.py mockdata_copilot_agent/tools/__init__.py mockdata_copilot_agent/tools/gcloud_tool.py mockdata_copilot_agent/tools/bigquery_tool.py mockdata_copilot_agent/tools/mockdata_tool.py "mockdata_copilot_agent/.docs/consumer_pii.columns.json" mockdata_copilot_agent/AGENTS.md .claude/skills/mockdata-copilot/SKILL.md .github/agents/mockdata_copilot.agent.md; do test -f "$f" || { echo "MISSING: $f"; exit 1; }; done && \
+for f in mockdata_copilot_agent/__init__.py mockdata_copilot_agent/config.py mockdata_copilot_agent/mcp_server.py mockdata_copilot_agent/run_tool.py mockdata_copilot_agent/tools/__init__.py mockdata_copilot_agent/tools/gcloud_tool.py mockdata_copilot_agent/tools/bigquery_tool.py mockdata_copilot_agent/tools/mockdata_tool.py "mockdata_copilot_agent/.docs/dv_columns.json" mockdata_copilot_agent/AGENTS.md .claude/skills/mockdata-copilot/SKILL.md .github/agents/mockdata_copilot.agent.md; do test -f "$f" || { echo "MISSING: $f"; exit 1; }; done && \
 test -z "$(grep -rn 'rca_copilot_agent\|ticketasg_copilot_agent' mockdata_copilot_agent/)" && echo "no cross-import OK" && \
 python mockdata_copilot_agent/run_tool.py generate_mockdata --json '{"seed": {"extsystemidskey":"1b48bdbb-bdbb-7b6f-0003-000000000033","consumerkey":"6d74baaa-baaa-7a19-899c-000000000032","isocountry":"ID","signature":1,"lucid":"C2ID00000000010","sourceconsumerid":"ID011000000001C","createddatetime":"1900-01-01T00:00:00Z","createdsourcesystemid":"MOCK_DATA","lastupdatedsourcesystemid":"MANUAL"}, "vary": {"signature": ["45","01","24"]}, "count": 3}' 2>/dev/null | python -c "import sys,json; d=json.load(sys.stdin); assert d['external_system_ids_sql'].startswith('INSERT INTO external_system_ids ('); assert len(d['rows'])==3; print('integration smoke PASS')"</automated>
   </verify>
@@ -275,7 +279,7 @@ python mockdata_copilot_agent/run_tool.py generate_mockdata --json '{"seed": {"e
     - Python files: `__init__.py`, `config.py` (MockDataConfig, DV defaults), `mcp_server.py`
       (4 tools), `run_tool.py` (CLI), `tools/__init__.py`, `tools/gcloud_tool.py` (verbatim),
       `tools/bigquery_tool.py` (verbatim, blocklist intact), `tools/mockdata_tool.py` (pure)
-    - `.docs/consumer_pii.columns.json` (pinned DV column set)
+    - `.docs/dv_columns.json` (pinned DV column set)
     - `AGENTS.md`, `.claude/skills/mockdata-copilot/SKILL.md`,
       `.github/agents/mockdata_copilot.agent.md`
     - `.gitignore` updated with `mockdata/`
@@ -286,8 +290,8 @@ python mockdata_copilot_agent/run_tool.py generate_mockdata --json '{"seed": {"e
        python mockdata_copilot_agent/run_tool.py generate_mockdata --json '{"seed": {"extsystemidskey":"1b48bdbb-bdbb-7b6f-0003-000000000033","consumerkey":"6d74baaa-baaa-7a19-899c-000000000032","isocountry":"ID","signature":1,"lucid":"C2ID00000000010","sourceconsumerid":"ID011000000001C","creationlocationid":"ID0160","locationid":null,"creationsalesrepid":"IDPGE450000","salesrepid":0,"createddatetime":"1900-01-01T00:00:00Z","status":"Close","lastlogindatetime":null,"createdsourcesystemid":"MOCK_DATA","lastupdatedsourcesystemid":"MANUAL","syscreateddatetime":"2026-06-19T00:00:00Z","sysupdatedatetime":"2026-06-23T09:48:27.302993Z","recordstatus":0,"country_iso_3166_1":360,"consumersourcekey":526979}, "vary": {"signature": ["45","01","24"], "sourceconsumerid": "increment"}, "count": 3}'
        ```
        Expected: JSON with an `external_system_ids_sql` INSERT block of 3 rows, each with a
-       unique `extsystemidskey`, varied `signature`, and Postgres `::uuid`/`::timestamptz` casts.
-       Compare against `mockdata_copilot_agent/.docs/external_system_ids mock up.sql` style.
+       unique `extsystemidskey`, varied `signature`, a fully-qualified backtick
+       `…external_system_ids` table ref, and GoogleSQL literals (`TIMESTAMP '…'`, no `::` casts).
 
     2. Save the report and inspect it:
        ```bash
@@ -296,17 +300,17 @@ python mockdata_copilot_agent/run_tool.py generate_mockdata --json '{"seed": {"e
        ```
        Expected: a `mockdata/<MMDDYYSS>.md` with `## Prompt`, `## external_system_ids`,
        `## consumer_pii`, `## Summary`, the "review & run manually / does not execute writes"
-       reminder, and the `[A1 USER-CONFIRM]` Postgres-dialect note.
+       reminder, and the `[A1]` GoogleSQL / BigQuery-DV dialect note.
 
-    3. [A2/A3 USER-CONFIRM] Open `mockdata_copilot_agent/.docs/consumer_pii.columns.json`:
+    3. [A2/A3] Open `mockdata_copilot_agent/.docs/dv_columns.json`:
        - Is `confirmed: true` (live-acquired)? If `false`, re-run the INFORMATION_SCHEMA fetch
-         with ADC before production so synthetic `consumer_pii` INSERTs use the real DV columns.
+         with ADC before production so generated INSERTs use the real DV column types.
 
-    4. [A1 / A4 USER-CONFIRM] Confirm:
-       - Generated INSERTs are run against the Postgres source/staging DB (the `::uuid`/
-         `::timestamptz` dialect), NOT BigQuery. (A1)
-       - `lucid` (+ optional `consumerkey`/`signature`/`isocountry`) is the right existence key
-         for the DV `consumer_pii` table. (A4)
+    4. [A1 / A4 — CONFIRMED] Sanity-check:
+       - Generated INSERTs are BigQuery GoogleSQL for the DV dataset (fully-qualified backtick
+         table, `TIMESTAMP '…'` literals, no `::` casts). Optionally dry-run one in BigQuery. (A1)
+       - `lucid` (+ optional `consumerkey`/`signature`/`isocountry`) is the existence key for the
+         DV `consumer_pii` table. (A4)
 
     5. (Optional, needs ADC) Live read-only lookup:
        ```bash
@@ -335,7 +339,7 @@ python mockdata_copilot_agent/run_tool.py generate_mockdata --json '{"seed": {"e
 
 | Threat ID | Category | Component | Disposition | Mitigation Plan |
 |-----------|----------|-----------|-------------|-----------------|
-| T-wave5-01 | Repudiation | A1/A2/A3/A4 assumptions in companions | accept | Assumptions are flagged `[USER-CONFIRM]` in AGENTS.md + SKILL.md; the human-verify checkpoint is mandatory before production use |
+| T-wave5-01 | Repudiation | A1/A2/A3/A4 decisions in companions | accept | Confirmed decisions (A1 GoogleSQL, A2/A3 live-fetched columns, A4 lucid key) are recorded in AGENTS.md + SKILL.md; the human-verify checkpoint sanity-checks the live-fetched column set before production use |
 | T-wave5-02 | Information Disclosure | mockdata/ report in git | mitigate | Wave-1 `.gitignore` line `mockdata/`; Check 5 verifies `git check-ignore`; companions repeat the "never stage" rule |
 | T-wave5-03 | Elevation of Privilege | agent instructions implying execution | mitigate | All 3 companions state the agent presents SQL only and never executes writes; the only live access is the read-only lookup |
 | T-wave5-SC | Tampering | npm/pip installs | accept | No new packages introduced this phase (02-RESEARCH Package Legitimacy Audit: none); all imports already installed; no install task exists |
