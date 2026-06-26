@@ -9,6 +9,7 @@ stays entirely inside the client — this server contains NO LLM calls.
 
 Tools:
   ensure_login          Ensure L'Oreal GCP login (gcloud user creds + ADC); default project = DV
+  fetch_seed            Read-only: fetch a live external_system_ids row to use as a seed
   lookup_consumer       Read-only consumer_pii existence check against the DV dataset
   generate_mockdata     Generate N mock external_system_ids rows (+ optional consumer_pii rows)
   save_mockdata_report  Write mockdata/<MMDDYYSS>.md and present the SQL
@@ -104,6 +105,43 @@ def create_mcp_server(output_dir: str):
                         },
                     },
                     "required": ["lucid"],
+                },
+            ),
+            Tool(
+                name="fetch_seed",
+                description=(
+                    "Fetch a real external_system_ids row from the DV dataset to use as a "
+                    "generation seed, so the agent never has to ask the user to paste one. "
+                    "Runs a read-only SELECT of the 18 live external_system_ids columns "
+                    "(never SELECT *) through the blocklisted executor, with optional "
+                    "whitelisted filters (isocountry/signature/sourcesystemid/lucid). Returns "
+                    "{seed, rows, row_count, sql}; feed `seed` straight into generate_mockdata. "
+                    "Read-only — it never executes an INSERT. The agent presents SQL only."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "isocountry": {
+                            "type": "string",
+                            "description": "Optional ISO country filter (e.g. 'AU').",
+                        },
+                        "signature": {
+                            "type": "string",
+                            "description": "Optional brand signature filter (e.g. 'YSL').",
+                        },
+                        "sourcesystemid": {
+                            "type": "string",
+                            "description": "Optional source system filter (e.g. 'MARS').",
+                        },
+                        "lucid": {
+                            "type": "string",
+                            "description": "Optional exact lucid filter.",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Rows to fetch (1-25, default 1).",
+                        },
+                    },
                 },
             ),
             Tool(
@@ -239,6 +277,31 @@ async def _dispatch(name: str, arguments: dict, output_dir: str) -> str:
             indent=2,
         )
 
+    elif name == "fetch_seed":
+        # Lazy auth — fetch_seed touches a live DB (read-only SELECT), like lookup_consumer.
+        try:
+            from tools.gcloud_tool import ensure_gcloud_auth
+            ensure_gcloud_auth("loreal.com")
+        except Exception as exc:
+            logger.warning(f"[GCLOUD] Auth check failed: {type(exc).__name__}: {exc}")
+
+        from tools.mockdata_tool import build_seed_sql, _SEED_FILTER_COLUMNS
+        from tools.bigquery_tool import query_bigquery_rows
+        filters = {k: arguments[k] for k in _SEED_FILTER_COLUMNS if arguments.get(k) not in (None, "")}
+        sql = build_seed_sql(filters=filters, limit=arguments.get("limit", 1))
+        rows, error = query_bigquery_rows(sql, rationale="fetch external_system_ids seed row")
+        return json.dumps(
+            {
+                "seed": rows[0] if rows else None,
+                "rows": rows,
+                "row_count": len(rows),
+                "sql": sql,
+                "error": error,
+            },
+            indent=2,
+            default=str,
+        )
+
     elif name == "generate_mockdata":
         from tools.mockdata_tool import generate_external_system_ids, generate_consumer_pii
         gen = generate_external_system_ids(
@@ -332,6 +395,7 @@ def _run_jsonrpc_fallback(output_dir: str) -> None:
                     {"name": t, "description": f"mockdata-copilot tool: {t}"}
                     for t in [
                         "ensure_login",
+                        "fetch_seed",
                         "lookup_consumer",
                         "generate_mockdata",
                         "save_mockdata_report",

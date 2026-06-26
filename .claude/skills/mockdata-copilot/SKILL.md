@@ -25,9 +25,9 @@ GCP target: project `oa-apmena-spacecds-ap-dv`, dataset `space_cds_b2c_ds_replic
 ## Prerequisites
 
 1. Python virtual environment activated: `source .venv/bin/activate`
-2. `gcloud auth application-default login` with a `@loreal.com` account — needed ONLY for the
-   read-only `lookup_consumer` check. The generate/save tools run fully offline with no
-   credentials.
+2. `gcloud auth application-default login` with a `@loreal.com` account — needed for the
+   read-only `fetch_seed` and `lookup_consumer` checks. The generate/save tools run fully
+   offline with no credentials.
 3. `schema.json` present in repo root (used by the BigQuery read-only executor).
 4. **No `.env` `COOKIE` / `X_USERTOKEN` needed** (no ServiceNow). **No SMTP** (no email).
 
@@ -50,12 +50,18 @@ command. You NEVER run the generated INSERTs.
 | Task | Command |
 |------|---------|
 | **Ensure GCP login** | `python mockdata_copilot_agent/run_tool.py ensure_login --json '{}'` |
+| **Fetch a live seed (read-only)** | `python mockdata_copilot_agent/run_tool.py fetch_seed --json '{"isocountry": "AU", "signature": "YSL", "limit": 1}'` |
 | **Generate mock rows (CORE)** | `python mockdata_copilot_agent/run_tool.py generate_mockdata --json '{"seed": {...}, "vary": {"signature": ["45","01"]}, "count": 2}'` |
 | **Check consumer (read-only)** | `python mockdata_copilot_agent/run_tool.py lookup_consumer --json '{"lucid": "C2ID00000000010"}'` |
 | **Save report (MANDATORY)** | `python mockdata_copilot_agent/run_tool.py save_mockdata_report --json '{"prompt": "...", "external_sql": "...", "consumer_sql": "...", "summary": "..."}'` |
 
 Notes on arguments:
 
+- `fetch_seed` takes only optional filters (`isocountry`, `signature`, `sourcesystemid`, `lucid`)
+  and `limit` (1-25, default 1). It runs a read-only `SELECT` of the live `external_system_ids`
+  columns and returns `{seed, rows, row_count, sql}` — feed the returned `seed` straight into
+  `generate_mockdata`. Use this whenever the user did not paste a seed; do NOT ask the user to
+  paste one.
 - `generate_mockdata` requires `seed`, `vary`, and `count`. `vary` maps a column name to a
   **list of values** (cycled per row) or the string **`"increment"`** (auto-bumps the seed value's
   trailing number/letter per row, e.g. `…001C → …001D`). Any other bare string raises an error —
@@ -76,24 +82,30 @@ Before calling any tool, classify the request:
 | Signal in prompt | Intent |
 |---|---|
 | A seed row pasted as JSON | Use it directly as the `seed` for `generate_mockdata` |
-| A path to the `.docs` xlsx seed | The seed must be supplied as JSON; ask the user to paste the row as JSON (xlsx parsing is a fallback only) |
+| No seed pasted (or "use a real/live seed", "fetch a seed", "don't ask me for the seed") | Call `fetch_seed` to pull a live `external_system_ids` row and use its `seed`. Do NOT ask the user to paste one. |
+| A path to the `.docs` xlsx seed | Prefer `fetch_seed` for a live row; xlsx parsing is a last-resort fallback |
 | "N rows" / "3 rows" / a count | Set `count` accordingly |
 | "vary signature" / "different sourceconsumerid" | Build the `vary` map for those columns |
+| Country / brand hints ("AU", "YSL", "MARS") | Pass them as `fetch_seed` filters so the seed is representative |
 
-Confirm: which seed, how many rows, and which columns to vary.
+Confirm only how many rows and which columns to vary. When no seed was pasted, fetch one with
+`fetch_seed` instead of asking the user for it.
 
 ### Steps 1–6 — Mandatory Sequence
 
 1. **`ensure_login`** — GCP login (gcloud user creds + ADC; default project = DV).
-2. **`generate_mockdata`** — clone the seed into N `external_system_ids` rows; read the returned
+2. **`fetch_seed`** *(when no seed was pasted)* — pull a live `external_system_ids` row (pass any
+   country/brand hints as filters); use the returned `seed`. Skip this step only if the user
+   pasted a seed JSON.
+3. **`generate_mockdata`** — clone the seed into N `external_system_ids` rows; read the returned
    `external_system_ids_sql`, `rows`, `lucids`, and `consumerkeys`.
-3. **`lookup_consumer` per distinct `lucid`** — read-only existence check; collect lucids whose
+4. **`lookup_consumer` per distinct `lucid`** — read-only existence check; collect lucids whose
    response is `exists: false`.
-4. **`generate_mockdata` again with `absent_lucids`** — pass the collected absent lucids so the
+5. **`generate_mockdata` again with `absent_lucids`** — pass the collected absent lucids so the
    response adds a `consumer_pii_sql` block for those consumers.
-5. **`save_mockdata_report`** — write `mockdata/<MMDDYYSS>.md` with the prompt, both INSERT
+6. **`save_mockdata_report`** — write `mockdata/<MMDDYYSS>.md` with the prompt, both INSERT
    blocks, and the summary.
-6. **Present the SQL** with the reminder: review and run the INSERTs manually against the
+7. **Present the SQL** with the reminder: review and run the INSERTs manually against the
    BigQuery DV dataset. The agent never executes writes.
 
 ## Output Rules

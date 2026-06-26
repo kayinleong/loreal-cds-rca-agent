@@ -7,12 +7,14 @@ Usage:
 
 Examples:
     python mockdata_copilot_agent/run_tool.py ensure_login --json '{}'
+    python mockdata_copilot_agent/run_tool.py fetch_seed --json '{"isocountry": "AU", "limit": 1}'
     python mockdata_copilot_agent/run_tool.py generate_mockdata --json '{"seed": {...}, "vary": {"signature": ["45","01"]}, "count": 2}'
     python mockdata_copilot_agent/run_tool.py lookup_consumer --json '{"lucid": "C2ID00000000010"}'
     python mockdata_copilot_agent/run_tool.py save_mockdata_report --json '{"prompt": "...", "external_sql": "...", "summary": "..."}'
 
 Tool names:
     ensure_login          Ensure L'Oreal GCP login (gcloud user creds + ADC); default project = DV
+    fetch_seed            Read-only: fetch a live external_system_ids row to use as a seed
     lookup_consumer       Read-only consumer_pii existence check against the DV dataset
     generate_mockdata     Generate N mock external_system_ids rows (+ optional consumer_pii rows)
     save_mockdata_report  Write mockdata/<MMDDYYSS>.md and present the SQL
@@ -78,7 +80,7 @@ def main() -> None:
     # never need auth and must run with zero credentials, so we do not trigger
     # the interactive gcloud login check on their paths. ensure_login and
     # lookup_consumer also re-check lazily inside _dispatch.
-    _BQ_TOOLS = {"ensure_login", "lookup_consumer"}
+    _BQ_TOOLS = {"ensure_login", "fetch_seed", "lookup_consumer"}
     if args.tool in _BQ_TOOLS:
         try:
             from tools.gcloud_tool import ensure_gcloud_auth

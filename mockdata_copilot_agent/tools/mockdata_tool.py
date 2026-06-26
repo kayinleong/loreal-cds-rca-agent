@@ -427,6 +427,51 @@ def generate_consumer_pii(consumers: list, column_types: dict | None = None,
     return {"sql": sql, "rows": rows}
 
 
+# Columns allowed as fetch_seed WHERE filters. Whitelisted so a caller-supplied
+# key can never inject an arbitrary column/clause; values are still single-quoted.
+_SEED_FILTER_COLUMNS = ("isocountry", "signature", "sourcesystemid", "lucid")
+
+
+def build_seed_sql(filters: dict | None = None, limit: int = 1,
+                   project: str = _DV_PROJECT, dataset: str = _DV_DATASET) -> str:
+    """Pure. Return a read-only SELECT that fetches live external_system_ids rows
+    to use as a generation seed (GoogleSQL).
+
+    Selects exactly the live external_system_ids column set (18 cols from
+    .docs/dv_columns.json) — never `SELECT *` — so the scan stays bounded and the
+    returned row matches what generate_external_system_ids expects. Optional
+    `filters` narrow the result; only the whitelisted columns in
+    _SEED_FILTER_COLUMNS are honoured (any other key is ignored), and every value
+    is single-quoted via _sq, so the SELECT is injection-safe and blocklist-clean.
+    `limit` is clamped to 1..25. Targets the fully-qualified table ref so the DV
+    executor is selected. This SELECT is the seed-discovery counterpart to
+    build_lookup_sql; the agent NEVER executes the generated INSERTs.
+    """
+    columns = _column_order("external_system_ids", EXTERNAL_SYSTEM_IDS_COLUMNS)
+    cols_block = ", ".join(columns)
+
+    filters = filters or {}
+    where = [
+        f"{col} = {_sq(filters[col])}"
+        for col in _SEED_FILTER_COLUMNS
+        if filters.get(col) not in (None, "")
+    ]
+    where_clause = ("\nWHERE " + "\n  AND ".join(where)) if where else ""
+
+    try:
+        n = int(limit)
+    except (TypeError, ValueError):
+        n = 1
+    n = max(1, min(n, 25))
+
+    return (
+        f"SELECT {cols_block}\n"
+        f"FROM {_table_ref('external_system_ids', project, dataset)}"
+        f"{where_clause}\n"
+        f"LIMIT {n}"
+    )
+
+
 def build_lookup_sql(lucid: str, consumerkey: str | None = None,
                      signature: str | None = None, isocountry: str | None = None,
                      project: str = _DV_PROJECT, dataset: str = _DV_DATASET) -> str:

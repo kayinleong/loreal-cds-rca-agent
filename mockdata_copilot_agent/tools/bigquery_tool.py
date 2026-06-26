@@ -554,6 +554,28 @@ def query_bigquery(sql: str, rationale: str = "") -> str:
     return result.to_llm_context()
 
 
+def query_bigquery_rows(sql: str, rationale: str = "") -> tuple[list[dict], Optional[str]]:
+    """Execute a read-only BigQuery SELECT and return structured rows.
+
+    Same safety path as query_bigquery (blocklist validation + read-only bq CLI
+    executor), but returns (rows, error) instead of an LLM-friendly string so
+    callers that need the actual values (e.g. fetch_seed) don't have to re-parse
+    a formatted blob. On success error is None; on failure rows is [] and error
+    is set.
+    """
+    if not _executors:
+        raise RuntimeError(_BQ_UNAVAILABLE)
+    executor = _pick_executor(sql)
+    is_valid, error = executor.validate_query(sql)
+    if not is_valid:
+        return [], error
+    logger.info(f"[BQ] billing_project={executor.project} | {rationale}\n  SQL: {sql[:200]}")
+    result = _bq_cli_execute(sql, executor.project, max_rows=executor.max_rows)
+    if not result.success:
+        return [], result.error
+    return result.data, None
+
+
 def lookup_schema(table_pattern: str = "") -> str:
     """Look up BigQuery table schemas from schema.json (fast) or live BQ (fallback)."""
     return get_schema_from_file(table_pattern)
