@@ -79,13 +79,13 @@ def send_rca_email(
     ctx = _ssl_context(verify=verify_ssl)
     try:
         if use_tls:
-            with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as s:
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=120) as s:
                 s.starttls(context=ctx)
                 if smtp_user and smtp_password:
                     s.login(smtp_user, smtp_password)
                 s.sendmail(smtp_from, smtp_to, msg.as_bytes())
         else:
-            with smtplib.SMTP_SSL(smtp_host, smtp_port, context=ctx, timeout=30) as s:
+            with smtplib.SMTP_SSL(smtp_host, smtp_port, context=ctx, timeout=120) as s:
                 if smtp_user and smtp_password:
                     s.login(smtp_user, smtp_password)
                 s.sendmail(smtp_from, smtp_to, msg.as_bytes())
