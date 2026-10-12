@@ -24,6 +24,7 @@ import os
 import re
 import logging
 import shutil
+import signal
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -67,11 +68,24 @@ def _is_usable(path: str) -> bool:
     return True if os.name == "nt" else os.access(path, os.X_OK)
 
 
+_warned_overrides: set = set()
+
+
+def _warn_bad_override(var: str, value: str) -> None:
+    """Log (once per process, to stderr via logging) that an override is unusable."""
+    if var in _warned_overrides:
+        return
+    _warned_overrides.add(var)
+    logger.warning("%s=%r is not a usable file; ignoring it and falling back to normal lookup", var, value)
+
+
 def _find_bq() -> str:
     """Resolve bq: BQ_BIN override, PATH (PATHEXT-aware), then known SDK dirs."""
     override = os.environ.get("BQ_BIN")
-    if override and _is_usable(override):
-        return override
+    if override:
+        if _is_usable(override):
+            return override
+        _warn_bad_override("BQ_BIN", override)
     path = shutil.which("bq")
     if path:
         return path
@@ -540,14 +554,41 @@ def _bq_cli_available() -> bool:
         r = subprocess.run(
             [_find_bq(), "version"],
             capture_output=True,
-            encoding="utf-8",
-            errors="replace",
             timeout=5,
             env=_sdk_env(),
         )
         return r.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
+
+
+def _kill_process_tree(proc) -> None:
+    """Best-effort kill of proc and its children, then reap without ever hanging."""
+    if proc is None:
+        return
+    try:
+        if os.name == "nt":
+            # bq.cmd -> cmd.exe -> python: proc.kill() would only hit cmd.exe.
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                capture_output=True,
+                timeout=10,
+            )
+        else:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (OSError, AttributeError):
+                proc.kill()
+    except Exception as exc:  # cleanup must never raise
+        logger.warning("bq process cleanup failed: %s", exc)
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    try:
+        proc.communicate(timeout=5)
+    except Exception:
+        pass  # second TimeoutExpired or closed pipes: give up, don't hang
 
 
 def _bq_cli_execute(sql: str, project: str, max_rows: int = 100) -> QueryResult:
@@ -558,8 +599,13 @@ def _bq_cli_execute(sql: str, project: str, max_rows: int = 100) -> QueryResult:
     is immune to Windows command-line quoting/length problems.
     """
     timeout = _bq_cli_timeout()
+    popen_kwargs = {}
+    if os.name != "nt":
+        # Own process group so a timeout can kill a wrapper script's children too.
+        popen_kwargs["start_new_session"] = True
+    proc = None
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             [
                 _find_bq(),
                 f"--project_id={project}",
@@ -570,17 +616,19 @@ def _bq_cli_execute(sql: str, project: str, max_rows: int = 100) -> QueryResult:
                 "--format=json",
                 f"--max_rows={max_rows}",
             ],
-            input=sql,
-            capture_output=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             env=_sdk_env(),
+            **popen_kwargs,
         )
-        stderr = proc.stderr.strip()
-        stdout = proc.stdout.strip()
+        # Bytes in/out: text mode would translate \n -> \r\n on Windows.
+        out_b, err_b = proc.communicate(input=sql.encode("utf-8"), timeout=timeout)
+        stderr = (err_b or b"").decode("utf-8", errors="replace").strip()
+        stdout = (out_b or b"").decode("utf-8", errors="replace").strip()
+        returncode = proc.returncode
 
-        if proc.returncode != 0:
+        if returncode != 0:
             return QueryResult(success=False, error=stderr or stdout, sql=sql)
 
         if not stdout or stdout in ("[]", ""):
@@ -600,6 +648,7 @@ def _bq_cli_execute(sql: str, project: str, max_rows: int = 100) -> QueryResult:
         )
 
     except subprocess.TimeoutExpired:
+        _kill_process_tree(proc)
         return QueryResult(success=False, error=f"bq CLI query timed out ({timeout}s)", sql=sql)
     except json.JSONDecodeError as exc:
         return QueryResult(success=False, error=f"bq CLI returned non-JSON output: {exc}", sql=sql)

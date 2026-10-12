@@ -23,53 +23,185 @@ def _cp(stdout="[]", stderr="", rc=0):
     return subprocess.CompletedProcess([], rc, stdout=stdout, stderr=stderr)
 
 
-class ExecuteTests(unittest.TestCase):
-    def _run(self, stdout="[]", rc=0, sql=SQL):
-        with mock.patch.object(bq, "_find_bq", return_value="bq"), \
-             mock.patch.object(bq.subprocess, "run", return_value=_cp(stdout, rc=rc)) as run:
-            res = bq._bq_cli_execute(sql, "proj", max_rows=7)
-        return res, run
+def _popen(stdout=b"[]", stderr=b"", rc=0, pid=4242, communicate_effects=None):
+    proc = mock.MagicMock()
+    proc.pid = pid
+    proc.returncode = rc
+    if communicate_effects is not None:
+        proc.communicate.side_effect = communicate_effects
+    else:
+        proc.communicate.return_value = (stdout, stderr)
+    return proc
 
-    def test_sql_via_stdin_not_argv(self):
-        _, run = self._run()
-        args, kwargs = run.call_args
+
+def _b(s):
+    return s.encode("utf-8")
+
+
+class ExecuteTests(unittest.TestCase):
+    def _run(self, stdout="[]", rc=0, sql=SQL, stderr=b""):
+        proc = _popen(_b(stdout), stderr, rc)
+        with mock.patch.object(bq, "_find_bq", return_value="bq"), \
+             mock.patch.object(bq.subprocess, "Popen", return_value=proc) as popen:
+            res = bq._bq_cli_execute(sql, "proj", max_rows=7)
+        return res, popen, proc
+
+    def test_sql_via_stdin_bytes_not_argv(self):
+        _, popen, proc = self._run()
+        args, kwargs = popen.call_args
         argv = args[0]
-        self.assertEqual(kwargs["input"], SQL)
+        sent = proc.communicate.call_args.kwargs["input"]
+        self.assertIsInstance(sent, bytes)
+        self.assertEqual(sent, SQL.encode("utf-8"))
+        self.assertNotIn(b"\r\n", sent)
+        self.assertIn(b"\n", sent)
         self.assertFalse(any("SELECT" in a for a in argv))
         self.assertIn("--headless", argv)
         self.assertIn("--quiet", argv)
         self.assertIn("--project_id=proj", argv)
         self.assertIn("--max_rows=7", argv)
         self.assertLess(argv.index("--headless"), argv.index("query"))
-        self.assertEqual(kwargs["encoding"], "utf-8")
-        self.assertEqual(kwargs["errors"], "replace")
-        self.assertNotIn("text", kwargs)
+        for k in ("encoding", "text", "universal_newlines", "errors"):
+            self.assertNotIn(k, kwargs)
+        self.assertEqual(kwargs["env"]["PYTHONUTF8"], "1")
+        self.assertEqual(kwargs["env"]["CLOUDSDK_CORE_DISABLE_PROMPTS"], "1")
+        self.assertEqual(proc.communicate.call_args.kwargs["timeout"], 120)
 
     def test_special_chars_verbatim(self):
         weird = 'SELECT "a" , \'b\' , 100%, <>|&^ , L\'Oréal, 中文\nFROM t'
-        _, run = self._run(sql=weird)
-        self.assertEqual(run.call_args.kwargs["input"], weird)
+        _, _, proc = self._run(sql=weird)
+        self.assertEqual(proc.communicate.call_args.kwargs["input"], weird.encode("utf-8"))
 
     def test_utf8_json_parses(self):
         rows = [{"name": "L'Oréal", "zh": "中文"}]
-        res, _ = self._run(json.dumps(rows, ensure_ascii=False))
+        res, _, _ = self._run(json.dumps(rows, ensure_ascii=False))
         self.assertTrue(res.success)
         self.assertEqual(res.data, rows)
         self.assertEqual(res.columns, ["name", "zh"])
 
     def test_nonzero_exit(self):
-        res, _ = self._run("", rc=1)
+        res, _, _ = self._run("", rc=1, stderr=b"boom")
         self.assertFalse(res.success)
+        self.assertEqual(res.error, "boom")
 
-    def test_timeout_message(self):
-        with mock.patch.dict(os.environ, {"BQ_CLI_TIMEOUT": "45"}), \
-             mock.patch.object(bq, "_find_bq", return_value="bq"), \
-             mock.patch.object(bq.subprocess, "run",
-                               side_effect=subprocess.TimeoutExpired("bq", 45)) as run:
-            res = bq._bq_cli_execute("SELECT 1", "p")
+    def test_stderr_invalid_utf8_replaced(self):
+        res, _, _ = self._run("", rc=1, stderr=b"bad \xff\xfe byte")
+        self.assertFalse(res.success)
+        self.assertIn("bad \ufffd", res.error)
+
+    def test_posix_new_session(self):
+        with mock.patch.object(bq.os, "name", "posix"):
+            _, popen, _ = self._run()
+        self.assertTrue(popen.call_args.kwargs["start_new_session"])
+
+    def test_windows_no_new_session(self):
+        proc = _popen(b"[]")
+        with mock.patch.object(bq, "_find_bq", return_value="bq"), \
+             mock.patch.object(bq, "_sdk_env", return_value={}), \
+             mock.patch.object(bq.os, "name", "nt"), \
+             mock.patch.object(bq.subprocess, "Popen", return_value=proc) as popen:
+            bq._bq_cli_execute("SELECT 1", "p")
+        self.assertNotIn("start_new_session", popen.call_args.kwargs)
+
+    def _timeout(self, osname, effects=None, **extra):
+        te = subprocess.TimeoutExpired("bq", 45)
+        proc = _popen(communicate_effects=effects or [te, (b"", b"")], pid=999)
+        patches = [
+            mock.patch.dict(os.environ, {"BQ_CLI_TIMEOUT": "45"}),
+            mock.patch.object(bq, "_find_bq", return_value="bq"),
+            mock.patch.object(bq, "_sdk_env", return_value={}),
+            mock.patch.object(bq.os, "name", osname),
+            mock.patch.object(bq.subprocess, "Popen", return_value=proc),
+            mock.patch.object(bq.subprocess, "run") if osname == "nt" else mock.patch.object(bq.os, "killpg", create=True),
+        ]
+        mocks = [p.start() for p in patches]
+        for p in patches:
+            self.addCleanup(p.stop)
+        res = bq._bq_cli_execute("SELECT 1", "p")
+        return res, proc, mocks[-1]
+
+    def test_timeout_windows_taskkill(self):
+        res, proc, run = self._timeout("nt")
+        self.assertFalse(res.success)
+        self.assertEqual(res.error, "bq CLI query timed out (45s)")
+        self.assertEqual(proc.communicate.call_args_list[0].kwargs["timeout"], 45)
+        self.assertEqual(run.call_args.args[0], ["taskkill", "/T", "/F", "/PID", "999"])
+        proc.kill.assert_not_called()
+        self.assertEqual(proc.communicate.call_count, 2)
+
+    def test_timeout_posix_kills_group(self):
+        import signal
+        res, proc, killpg = self._timeout("posix")
         self.assertFalse(res.success)
         self.assertIn("45s", res.error)
-        self.assertEqual(run.call_args.kwargs["timeout"], 45)
+        killpg.assert_called_once_with(999, signal.SIGKILL)
+        self.assertEqual(proc.communicate.call_count, 2)
+
+    def test_timeout_posix_falls_back_to_proc_kill(self):
+        te = subprocess.TimeoutExpired("bq", 45)
+        proc = _popen(communicate_effects=[te, (b"", b"")], pid=999)
+        with mock.patch.object(bq, "_find_bq", return_value="bq"), \
+             mock.patch.object(bq, "_sdk_env", return_value={}), \
+             mock.patch.object(bq.os, "name", "posix"), \
+             mock.patch.object(bq.os, "killpg", side_effect=ProcessLookupError, create=True), \
+             mock.patch.object(bq.subprocess, "Popen", return_value=proc):
+            res = bq._bq_cli_execute("SELECT 1", "p")
+        self.assertFalse(res.success)
+        proc.kill.assert_called_once_with()
+
+    def test_second_timeout_during_cleanup_does_not_hang_or_raise(self):
+        te = subprocess.TimeoutExpired("bq", 5)
+        for osname in ("nt", "posix"):
+            res, proc, _ = self._timeout(osname, effects=[subprocess.TimeoutExpired("bq", 45), te])
+            self.assertFalse(res.success)
+            self.assertIn("timed out (45s)", res.error)
+            self.assertEqual(proc.communicate.call_args_list[1].kwargs["timeout"], 5)
+
+    def test_taskkill_failure_does_not_raise(self):
+        te = subprocess.TimeoutExpired("bq", 45)
+        proc = _popen(communicate_effects=[te, (b"", b"")], pid=1)
+        with mock.patch.object(bq, "_find_bq", return_value="bq"), \
+             mock.patch.object(bq, "_sdk_env", return_value={}), \
+             mock.patch.object(bq.os, "name", "nt"), \
+             mock.patch.object(bq.subprocess, "Popen", return_value=proc), \
+             mock.patch.object(bq.subprocess, "run", side_effect=FileNotFoundError):
+            res = bq._bq_cli_execute("SELECT 1", "p")
+        self.assertIn("timed out", res.error)
+        proc.kill.assert_called_once_with()
+
+
+class OverrideWarningTests(unittest.TestCase):
+    def setUp(self):
+        for m in (bq, gc):
+            m._warned_overrides.clear()
+            self.addCleanup(m._warned_overrides.clear)
+
+    def test_bad_bq_bin_warns_once_and_falls_through(self):
+        with mock.patch.dict(os.environ, {"BQ_BIN": "/nonexistent/bq"}), \
+             mock.patch.object(bq.shutil, "which", return_value="/usr/bin/bq"):
+            with self.assertLogs(bq.logger, level="WARNING") as cm:
+                self.assertEqual(bq._find_bq(), "/usr/bin/bq")
+                self.assertEqual(bq._find_bq(), "/usr/bin/bq")
+            self.assertEqual(len(cm.records), 1)
+            self.assertIn("BQ_BIN", cm.output[0])
+
+    def test_bad_gcloud_bin_warns_once_and_falls_through(self):
+        with mock.patch.dict(os.environ, {"GCLOUD_BIN": "/nonexistent/gcloud"}), \
+             mock.patch.object(gc.shutil, "which", return_value="/usr/bin/gcloud"):
+            with self.assertLogs(gc._logger, level="WARNING") as cm:
+                self.assertEqual(gc._find_gcloud(), "/usr/bin/gcloud")
+                self.assertEqual(gc._find_gcloud(), "/usr/bin/gcloud")
+            self.assertEqual(len(cm.records), 1)
+            self.assertIn("GCLOUD_BIN", cm.output[0])
+
+    def test_valid_override_no_warning(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp, "bq")
+            f.write_text("x")
+            f.chmod(0o755)
+            with mock.patch.dict(os.environ, {"BQ_BIN": str(f)}):
+                with self.assertNoLogs(bq.logger, level="WARNING"):
+                    self.assertEqual(bq._find_bq(), str(f))
 
 
 class EnvTests(unittest.TestCase):
@@ -196,7 +328,7 @@ class QueryApiTests(unittest.TestCase):
         self.addCleanup(p2.stop)
 
     def test_blocked_sql_no_subprocess(self):
-        with mock.patch.object(bq.subprocess, "run") as run:
+        with mock.patch.object(bq.subprocess, "Popen") as run:
             res = bq.query_bigquery_result("DELETE FROM `p.d.t` WHERE 1=1")
             text = bq.query_bigquery("DELETE FROM `p.d.t` WHERE 1=1")
         self.assertFalse(res.success)
@@ -208,8 +340,8 @@ class QueryApiTests(unittest.TestCase):
     def test_success_returns_result_and_string(self):
         rows = [{"n": "中文"}]
         with mock.patch.object(bq, "_find_bq", return_value="bq"), \
-             mock.patch.object(bq.subprocess, "run",
-                               return_value=_cp(json.dumps(rows, ensure_ascii=False))):
+             mock.patch.object(bq.subprocess, "Popen",
+                               side_effect=lambda *a, **k: _popen(_b(json.dumps(rows, ensure_ascii=False)))):
             res = bq.query_bigquery_result("SELECT 1", "why")
             text = bq.query_bigquery("SELECT 1", "why")
         self.assertTrue(res.success)

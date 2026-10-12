@@ -26,6 +26,7 @@ import os
 import shutil
 import subprocess
 import sys
+import logging
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -57,6 +58,18 @@ def _is_usable(path: str) -> bool:
     return True if os.name == "nt" else os.access(path, os.X_OK)
 
 
+_logger = logging.getLogger(__name__)
+_warned_overrides: set = set()
+
+
+def _warn_bad_override(var: str, value: str) -> None:
+    """Log (once per process, to stderr via logging) that an override is unusable."""
+    if var in _warned_overrides:
+        return
+    _warned_overrides.add(var)
+    _logger.warning("%s=%r is not a usable file; ignoring it and falling back to normal lookup", var, value)
+
+
 def _find_gcloud() -> str:
     """
     Return the gcloud binary path.
@@ -66,8 +79,10 @@ def _find_gcloud() -> str:
     customisations, so PATH lookup alone often fails).
     """
     override = os.environ.get("GCLOUD_BIN")
-    if override and _is_usable(override):
-        return override
+    if override:
+        if _is_usable(override):
+            return override
+        _warn_bad_override("GCLOUD_BIN", override)
     path = shutil.which("gcloud")
     if path:
         return path
