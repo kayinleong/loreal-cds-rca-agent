@@ -18,16 +18,17 @@ Validate root causes with live BigQuery queries and produce structured RCA repor
 | `get_incident_summary` | Read full incident text from local cache |
 | `list_incidents` | Discover what is locally available |
 | `search_incidents` | Keyword-search across all local incidents |
-| `post_comment` | Post comment / work note to SNOW (confirm with user first) |
+| `post_comment` | Post comment / work note to SNOW. Code-gated: without `confirmed: true` it returns a preview and posts nothing — show the preview, get explicit user approval, then call again with `confirmed: true` |
 | `extract_identifiers` | Pull order IDs, emails, EAN codes from an incident |
 | `download_attachments` | Download image / file attachments for an incident |
-| `query_bigquery` | Run a read-only SELECT query against SPACE CDS data |
+| `query_bigquery` | Run a read-only SELECT query against SPACE CDS data (via `bq` CLI). During an RCA ALWAYS pass `incident_number` — the query is recorded as evidence |
 | `get_schema` | Get table columns, or list all tables in the dataset |
-| `list_bq_tables` | List all BQ tables with row counts and sizes |
-| `save_rca_report` | **MANDATORY** — save every completed RCA report to disk |
-| `send_rca_email` | **MANDATORY** — notify the human when the session is done |
+| `list_bq_tables` | List all BQ tables with their RCA purpose text (from `schema.json`; no row counts or sizes) |
+| `get_rca_template` | Return the canonical RCA template, writing rules and full canonical assignment-group table. Call once per session before writing the first RCA |
+| `save_rca_report` | **MANDATORY** — validate and save every completed RCA report to disk (rejects missing/empty sections) |
+| `send_rca_email` | **MANDATORY** — notify the human once the session is done (attaches every saved, not-yet-emailed report) |
 | `auto_credential_refresh` | Automatic startup tool — not callable; runs at MCP server start to detect and renew stale ServiceNow session cookies via browser SSO |
-| `auto_gcloud_auth` | Automatic startup tool — not callable; runs after SNOW auth to verify the active gcloud account is a loreal.com account and ADC is configured; triggers `gcloud auth application-default login` if not |
+| `auto_gcloud_auth` | Automatic startup tool — not callable; runs after SNOW auth to verify the active gcloud account is a loreal.com account (user login via `gcloud auth login`; ADC is not used); triggers login if not |
 
 ## Environment Setup
 
@@ -46,41 +47,63 @@ Edge is already installed — no additional browser download required.
 
 If playwright is not installed, the server falls back to the manual instructions in `.env.example`.
 
+## Platform Setup (macOS / Windows)
+
+- **Activate the venv first** (once per terminal): macOS `source .venv/bin/activate`; Windows PowerShell `.venv\Scripts\Activate.ps1`; Windows cmd `.venv\Scripts\activate.bat`. Then `python rca_copilot_agent/run_tool.py ...` works on both (forward slashes are fine on Windows).
+- **Creating an args file** (see below): prefer the host's file-write tool. Terminal fallback —
+  macOS/Linux: `mkdir -p .rca_tmp && cat > .rca_tmp/q.json <<'EOF'` ... `EOF`;
+  Windows PowerShell: `New-Item -ItemType Directory -Force .rca_tmp | Out-Null` then `Set-Content -Encoding utf8 -Path .rca_tmp\q.json -Value @'` ... `'@` (single-quoted here-string is literal; the closing `'@` must start its own line).
+- **BigQuery** runs through the `bq` CLI on gcloud user credentials: `gcloud auth login` with an @loreal.com account (checked automatically at startup). The Google Cloud SDK is auto-detected (PATH, standard install dirs incl. Windows `%LOCALAPPDATA%\Google\Cloud SDK\...`); override with `BQ_BIN` / `GCLOUD_BIN`. Timeout: `BQ_CLI_TIMEOUT` (default 120 s).
+- Output is UTF-8 on all platforms.
+
 ## Running Without MCP (Skills / CLI Mode)
 
 L'Oréal's environment does not allow MCP servers. Use `run_tool.py` instead — it wraps every
-tool function and requires no server process:
+tool function and requires no server process. Pick ONE way to pass arguments:
+
+| Form | Use for |
+|------|---------|
+| `--arg key=value` (repeatable; `true`/`false` become booleans) | Simple values. Works in zsh/bash, PowerShell and cmd |
+| `--json-file .rca_tmp/<tool>.json` (**recommended**) | Anything with free text. Write the args as a JSON object (UTF-8, BOM tolerated) to `.rca_tmp/` (repo root, gitignored). **Required** for `query_bigquery`, `save_rca_report`, `send_rca_email`, `post_comment`, `search_incidents`, `fetch_incidents` (URLs contain `&`, `%`) |
+| `--json -` | JSON object on stdin |
+| `--json '<JSON>'` | **Do not use** — POSIX-shell-only and breaks on apostrophes |
 
 ```bash
 # One-stop analysis for a single incident
-python rca_copilot_agent/run_tool.py analyze_incident --json '{"incident_number": "INC10403788"}'
+python rca_copilot_agent/run_tool.py analyze_incident --arg incident_number=INC10403788
 
-# List locally cached incidents
-python rca_copilot_agent/run_tool.py list_incidents --json '{}'
+# List locally cached incidents (no args)
+python rca_copilot_agent/run_tool.py list_incidents
 
 # Fetch all incidents from a SNOW list URL
-python rca_copilot_agent/run_tool.py fetch_incidents --json '{"list_url": "https://loreal.service-now.com/..."}'
+#   .rca_tmp/fetch_incidents.json: {"list_url": "https://loreal.service-now.com/..."}
+python rca_copilot_agent/run_tool.py fetch_incidents --json-file .rca_tmp/fetch_incidents.json
 
-# Run a BigQuery query (always include LIMIT)
-python rca_copilot_agent/run_tool.py query_bigquery \
-    --json '{"sql": "SELECT * FROM `oa-apmena-spacecds-ap-pd.space_cds_b2c_ds_replica_ae2_pd_public.purchase` WHERE sourceordernumber = \"ORD123\" LIMIT 5", "rationale": "Look up order status"}'
+# Get the canonical RCA template (once per session, before the first RCA)
+python rca_copilot_agent/run_tool.py get_rca_template
 
-# Save an RCA report to disk (MANDATORY after each incident)
-python rca_copilot_agent/run_tool.py save_rca_report \
-    --json '{"incident_number": "INC10403788", "report_text": "### WHAT HAPPENED\n..."}'
+# Run a BigQuery query (always include LIMIT; always pass incident_number during an RCA)
+#   .rca_tmp/query_bigquery.json:
+#   {"sql": "SELECT * FROM `oa-apmena-spacecds-ap-pd.space_cds_b2c_ds_replica_ae2_pd_public.purchase` WHERE sourceordernumber = 'ORD123' LIMIT 5",
+#    "rationale": "Look up order status", "incident_number": "INC10403788"}
+python rca_copilot_agent/run_tool.py query_bigquery --json-file .rca_tmp/query_bigquery.json
+
+# Save an RCA report (MANDATORY after each incident; fix and retry if it returns "✗ RCA report NOT saved")
+#   .rca_tmp/save_rca_report.json: {"incident_number": "INC10403788", "report_text": "### WHAT HAPPENED\n..."}
+python rca_copilot_agent/run_tool.py save_rca_report --json-file .rca_tmp/save_rca_report.json
 
 # Send email notification (MANDATORY once per session, after all reports saved)
-python rca_copilot_agent/run_tool.py send_rca_email \
-    --json '{"session_summary": "Investigated INC10403788 — root cause: missing MARSID", "subject": "RCA Complete — INC10403788"}'
+#   .rca_tmp/send_rca_email.json: {"session_summary": "Investigated INC10403788 — root cause: missing MARSID", "subject": "RCA Complete — INC10403788"}
+python rca_copilot_agent/run_tool.py send_rca_email --json-file .rca_tmp/send_rca_email.json
 ```
 
 **For Claude Code users:** invoke the `/rca-copilot` skill (`.claude/skills/rca-copilot/SKILL.md`)
 which orchestrates the full RCA workflow using these CLI commands automatically via the `Bash` tool.
 
 **For GitHub Copilot users:** the `.github/agents/rca_copilot.agent.md` agent definition uses
-`run_in_terminal` to call `run_tool.py` directly — no MCP server process needed.
+the terminal to call `run_tool.py` directly (and file create/edit under `.rca_tmp/` for args files) — no MCP server process needed.
 
-**All 14 tool names** (valid `<tool_name>` values for `--json` calls):
+**All 15 tool names** (valid `<tool_name>` values for `run_tool.py`):
 
 | Tool | Description |
 |------|-------------|
@@ -92,14 +115,15 @@ which orchestrates the full RCA workflow using these CLI commands automatically 
 | `search_incidents` | Keyword-search local incidents |
 | `extract_identifiers` | Pull order IDs / emails / EAN codes from an incident |
 | `download_attachments` | Download attachment files for an incident |
-| `post_comment` | Post comment / work note to SNOW |
+| `post_comment` | Post comment / work note to SNOW (preview unless `confirmed: true`) |
 | `list_bq_tables` | List all BQ tables with RCA purpose |
 | `get_schema` | Get column names and query patterns for a table |
-| `query_bigquery` | Run a read-only SELECT query |
-| `save_rca_report` | **MANDATORY** — save completed RCA to disk |
+| `query_bigquery` | Run a read-only SELECT query (pass `incident_number` during an RCA) |
+| `get_rca_template` | Canonical RCA template + writing rules + assignment-group table (no args) |
+| `save_rca_report` | **MANDATORY** — validate and save completed RCA to disk |
 | `send_rca_email` | **MANDATORY** — notify reviewer when session done |
 
-The credential refresh (`auth_tool`) and gcloud ADC check (`gcloud_tool`) also run automatically
+The credential refresh (`auth_tool`) and gcloud login check (`gcloud_tool`) also run automatically
 at CLI startup — same as the MCP server startup sequence.
 
 ## Investigation Workflow
@@ -114,6 +138,7 @@ at CLI startup — same as the MCP server startup sequence.
 1. Call `list_bq_tables` to see all available tables and their RCA purpose (reads schema.json — instant, no BQ cost).
 2. Call `get_schema <table_name>` to get column names, relationships, and ready-to-use query patterns.
 3. Map extracted identifiers to table columns using the Key Tables table below.
+4. Call `get_rca_template` once per session (before writing the first RCA) — it is the source of truth for the report format.
 
 ### Phase 3 — VALIDATE
 **Run multiple queries. One query is never enough. If a query returns 0 rows, that IS a finding — investigate why.**
@@ -142,6 +167,10 @@ Always add a `LIMIT` clause. Use backtick table refs with the **full project.dat
 - If primary returns 0 rows for a B2C query, retry against the AE2 DV replica
 
 **BigQuery billing projects:** The tool automatically routes jobs to the correct billing project based on the table reference. No action required — but always use the fully-qualified `` `project.dataset.table` `` form.
+
+**Evidence recording:** during an RCA ALWAYS pass `incident_number` to `query_bigquery`. The query (SQL, rationale, row count or error — never result rows) is recorded and appended to the saved report as "## Evidence — BigQuery queries run". There is no cost guard (by decision); the blocklist and the 100-row cap still apply.
+
+**Privacy:** evidence logs under `<REPORTS_DIR>/rca_reports/.evidence/` store the SQL text (which can contain identifiers such as emails, phones or order IDs from tickets) but never result rows; the reports dir is gitignored — never commit it.
 
 ### Phase 3b — B2B Customer "Cannot Search / Cannot Create" Checklist
 
@@ -200,79 +229,37 @@ Interpret results:
 | 0 rows by phone too | Customer truly absent from CDS; confirm customercode is correct; ask MARS to resend |
 
 ### Phase 4 — CONCLUDE
-1. Write the RCA report using the template below.
+1. Write the RCA report using the template from `get_rca_template`.
 2. Call `save_rca_report` **immediately** after finishing each report.
-   The saved path is automatically registered for email attachment.
-3. Call `send_rca_email` **once**, after ALL reports are saved.
+   It validates the report: missing/empty sections return `✗ RCA report NOT saved ...` — fix and call again.
+   Warnings (shortform group names, placeholders, no `→ Checked` lines) are returned but do not block.
+   The saved report gets a ticket metadata header (from the local incident cache) and the BigQuery evidence appendix
+   automatically — never write those yourself. `save_rca_report` accepts common heading variants, but still use the exact `###` headings from `get_rca_template`. Evidence for a report covers queries recorded since the incident's last emailed report, within `RCA_SESSION_WINDOW_HOURS` (default 24); re-saving before emailing keeps it. Every saved report is registered on disk for the email.
+3. Call `send_rca_email` **once**, after ALL reports are saved (works across separate CLI calls).
+   It attaches saved, not-yet-emailed reports (only the latest per incident). Pass `incident_numbers` = the incidents investigated in this session (args file `{"session_summary": "...", "subject": "...", "incident_numbers": ["INC1","INC2"]}`); without it, all saved-but-unsent reports from the last `RCA_SESSION_WINDOW_HOURS` hours (default 24) are attached. The result ends with `Attached incidents: ...` — check it matches what you investigated.
+   The email contains a summary table, each RCA inline and the `.md` attachments.
    - `session_summary`: plain-text list of incidents investigated and key finding per incident.
    - `subject`: short subject line, e.g. "RCA Complete — INC10403788, INC10412275".
 4. After `send_rca_email` returns, tell the user: "Email sent — please review and confirm findings."
+5. Posting back to ServiceNow: call `post_comment` without `confirmed` to get a preview, show it to the user, and only after
+   explicit approval call it again with `confirmed: true`.
 
 > **Never ask the user for verification before calling `send_rca_email`.**
 > The email IS the notification. The user will respond when ready.
 
 > **A failed or empty BQ query is NOT "cannot find root cause."** It is data that must be interpreted:
 > - 0 rows by customercode → customer missing from CDS (ingestion issue)
-> - Auth error → re-check project qualifier in SQL; try `oa-apmena-spacecds-ap-dv` as billing project
+> - Auth error → run `gcloud auth login` (@loreal.com account); re-check project qualifier in SQL; try `oa-apmena-spacecds-ap-dv` as billing project
 > - Syntax error → check column names with `get_schema` before retrying
 > Always explain what the query result means in context of the incident.
 
 ## Report Template
 
-```markdown
-# RCA Report: {incident_number}
-**{incident_title}**
-*Investigated: {date}*
-
----
-
-## WHAT HAPPENED
-{one sentence — the symptom, not the cause}
-
-## WHAT WE CHECKED
-→ Checked {system} — {result}
-→ Checked {system} — {result}
-
-## WHAT WE FOUND
-{conclusion from checks — one or two sentences with evidence}
-
-## WHAT WE NEED / DID
-{action items with owners and deadlines}
-```
-
-### Rule: Always use FULL canonical assignment-group names
-
-When the report names a SNOW assignment group anywhere (action items in `WHAT WE NEED / DID`, evidence in `WHAT WE CHECKED`, etc.), **always write the verbatim canonical group name as it appears in ServiceNow.** Never use operator shortforms (`CDS L3`, `LOY`, `MARS team`, `iBeauty`, `NGL`, etc.) — they're ambiguous outside the team and they don't match the SNOW Reassign-Group picker.
-
-Example:
-- ✓ "Assign to `APAC - SGP - SPACE CDS SAPMENA L3 Support` as the issue is tracked in DFCT0268807."
-- ✗ "Assign to CDS L3 team as the issue is tracked in DFCT0268807."
-
-Shortform → canonical mapping (use this table when a work-note says e.g. "LOY" and you must translate it for the report):
-
-| Shorthand seen in work-notes | Full canonical SNOW group |
-|---|---|
-| `CDS L2`, `CDS L2 team`, `SAPMENA CDS group` | `APAC - SGP - SPACE CDS SAPMENA L2 Support` |
-| `CDS L3`, `CDS L3 team` | `APAC - SGP - SPACE CDS SAPMENA L3 Support` |
-| `LOY`, `LOY team`, `Loyalty`, `Loyalty team` (loyalty backend) | `APAC - ZN - O+O.NGLORA - L2` |
-| `LOY L3`, `Loyalty L3` | `APAC - CHN - SPACE Loyalty L3 Support` |
-| `MARS`, `MARS team`, `MARS Ops`, `MARS Operations`, `retail Ops team` | `APAC - ZN - O+O OMNISALES.RETAIL - CAPGEMINI-GDC-MARS - RUN - L2` |
-| `iBeauty`, `iBeauty team`, `IBeauty team`, `iBeauty L2` | `APAC - ZN - iBeauty 2.0 - Retail - L2` |
-| `SFCC`, `SFCC L2` | `APAC - ZN - O+O ONLINE.CED - CAPGEMINI-GDC-SPACE-GDS - RUN - L2` |
-| `CRM`, `SFMC team`, `SFDC team`, `CE team`, `CE Ops team` | `APAC - ZN - O+O.CRM - L2` |
-| `NGL`, `NGL L2`, `NGLORA` | `APAC - ZN - O+O.NGLORA - L2` |
-| `Operations`, `Ops`, `OPS team` (only when no more specific match) | `APAC - ZN - O+O.OPERATIONS - L2` |
-| `Hypercare`, `Hypercare team`, `Hypercare group`, `LS team`, `LS Hypercare`, `Aesop hypercare` | `APAC - ZN - SPACE B2C Hypercare` |
-| `HIP`, `HIP team`, `Infrastructure team`, `Azure team` (HIP-adjacent) | `TECH FNDN - WW - HIP INCIDENT L2` |
-| `THN Retail`, `Thailand Retail` | `APAC - THN - Retail IT` |
-
-L3 / specialised groups that appear in real work-notes (also use full names — never the shorthand):
-- `APAC - SGP - SPACE CDS SAPMENA L3 Support`
-- `APAC - CHN - SPACE Loyalty L3 Support`
-- `APAC - SGP - SPACE Loyalty L3 Support`
-- `INFRA - WW - Linux Unix ACN - L3`
-
-If the right canonical group is uncertain, pick the closest match and add `[USER-CONFIRM]` next to it in the report so the reviewer knows to verify.
+**Source of truth: `rca_copilot_agent/tools/rca_report_tool.py`** — exposed to hosts as the `get_rca_template` tool,
+which returns the canonical template, the writing rules and the full canonical ServiceNow assignment-group table
+(always FULL canonical group names, never shortforms; add `[USER-CONFIRM]` when uncertain). This file deliberately
+does not duplicate them, so they cannot drift. The report has four `###` sections: WHAT HAPPENED / WHAT WE CHECKED /
+WHAT WE FOUND / WHAT WE NEED / DID; `save_rca_report` validates them.
 
 ## Common SPACE CDS Root Causes
 
@@ -312,10 +299,10 @@ If the right canonical group is uncertain, pick the closest match and add `[USER
 | `space_cds_b2c_ds_replica_ae2_dv_public` | **B2C historical fallback** — same schema as primary; query here when primary (ae2_pd_public) returns 0 rows |
 | `space_cds_b2c_ds_replica_ase1_dv_public` | B2C ASE1 pipeline debug or survey data |
 
-**Access:** Read-only via gcloud ADC — no credentials in `.env` needed  
+**Access:** Read-only via the `bq` CLI on gcloud user credentials — no credentials in `.env` needed; 100-row cap, blocklist, no cost guard  
 **Dialect:** GoogleSQL (backtick refs, SAFE_DIVIDE, UNNEST, etc.)  
 **Schema source:** `schema.json` in repo root — `get_schema` and `list_bq_tables` read all datasets instantly  
-**Auth:** Run `gcloud auth application-default login` if BQ queries fail with auth errors
+**Auth:** Run `gcloud auth login` (@loreal.com account) if BQ queries fail with auth errors — ADC is not used. SDK auto-detected on macOS and Windows; override with `BQ_BIN` / `GCLOUD_BIN`; timeout `BQ_CLI_TIMEOUT` (default 120 s)
 
 ### Query Rules (mandatory)
 

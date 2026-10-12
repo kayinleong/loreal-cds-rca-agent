@@ -1,16 +1,21 @@
 """
-BigQuery Tool — Safe, Read-Only Executor with schema.json-driven initialization
-================================================================================
-Auth:   gcloud Application Default Credentials (ADC) — no BQ env vars required.
-Schema: Reads schema.json from repo root for instant offline schema lookups.
+BigQuery Tool — Read-Only Executor with schema.json-driven initialization
+=========================================================================
+Execution: the live query path shells out to the `bq` CLI (see _bq_cli_execute),
+           using gcloud *user* credentials (`gcloud auth login`), on macOS and
+           Windows. SQL is passed on stdin, not argv.
+Schema:    Reads schema.json from repo root for instant offline schema lookups.
 
-Multi-layer safety:
-  1. IAM: account must have roles/bigquery.dataViewer + jobUser only
-  2. Keyword filter: block INSERT/UPDATE/DELETE/DROP/etc.
-  3. Dry-run validation: check syntax + estimate cost before execution
-  4. maximum_bytes_billed: hard cost ceiling per query
-  5. Row limit: cap result set size for LLM context
-  6. Timeout: kill long-running queries
+Safeguards enforced on the live path (by user decision there is NO dry-run and
+NO maximum_bytes_billed cost cap):
+  1. IAM: account should hold roles/bigquery.dataViewer + jobUser only
+  2. Keyword blocklist: block INSERT/UPDATE/DELETE/DROP/etc.
+  3. Statement check: query must start with SELECT or WITH
+  4. Row cap: bq --max_rows limits the result set
+  5. Timeout: BQ_CLI_TIMEOUT seconds (default 120)
+
+SafeBigQueryExecutor.dry_run()/execute() (python client, ADC) are retained but
+are not used by query_bigquery.
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ import os
 import re
 import logging
 import shutil
+import signal
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -39,20 +45,64 @@ _BQ_FALLBACK_PATHS = [
     "/snap/bin/bq",
 ]
 
+_WIN_SDK_ENV_VARS = (
+    ("LOCALAPPDATA", ("Google", "Cloud SDK", "google-cloud-sdk", "bin")),
+    ("ProgramFiles(x86)", ("Google", "Cloud SDK", "google-cloud-sdk", "bin")),
+    ("ProgramFiles", ("Google", "Cloud SDK", "google-cloud-sdk", "bin")),
+)
+
+
+def _windows_sdk_bin_dirs() -> list:
+    """Windows Cloud SDK bin dirs built from env vars at call time (unset ones skipped)."""
+    dirs = []
+    for var, parts in _WIN_SDK_ENV_VARS:
+        base = os.environ.get(var)
+        if base:
+            dirs.append(os.path.join(base, *parts))
+    return dirs
+
+
+def _is_usable(path: str) -> bool:
+    if not os.path.isfile(path):
+        return False
+    return True if os.name == "nt" else os.access(path, os.X_OK)
+
+
+_warned_overrides: set = set()
+
+
+def _warn_bad_override(var: str, value: str) -> None:
+    """Log (once per process, to stderr via logging) that an override is unusable."""
+    if var in _warned_overrides:
+        return
+    _warned_overrides.add(var)
+    logger.warning("%s=%r is not a usable file; ignoring it and falling back to normal lookup", var, value)
+
 
 def _find_bq() -> str:
+    """Resolve bq: BQ_BIN override, PATH (PATHEXT-aware), then known SDK dirs."""
+    override = os.environ.get("BQ_BIN")
+    if override:
+        if _is_usable(override):
+            return override
+        _warn_bad_override("BQ_BIN", override)
     path = shutil.which("bq")
     if path:
         return path
-    for candidate in _BQ_FALLBACK_PATHS:
-        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+    if os.name == "nt":
+        candidates = [os.path.join(d, "bq.cmd") for d in _windows_sdk_bin_dirs()]
+    else:
+        candidates = _BQ_FALLBACK_PATHS
+    for candidate in candidates:
+        if _is_usable(candidate):
             return candidate
     return "bq"  # let subprocess raise FileNotFoundError with a clear message
 
 
 def _sdk_env() -> dict:
     """
-    Return os.environ copy with the Cloud SDK bin/ dir prepended to PATH.
+    Return os.environ copy with the Cloud SDK bin/ dir prepended to PATH, plus
+    UTF-8 and non-interactive settings for the bq (Python) subprocess.
 
     VS Code (and other GUI launchers) strip shell PATH customisations, so even
     when bq is resolved via _find_bq(), bq itself calls gcloud internally for
@@ -64,8 +114,26 @@ def _sdk_env() -> dict:
     if bq_binary != "bq":
         bin_dir = os.path.dirname(os.path.abspath(bq_binary))
         existing = env.get("PATH", "")
-        env["PATH"] = f"{bin_dir}:{existing}" if existing else bin_dir
+        env["PATH"] = f"{bin_dir}{os.pathsep}{existing}" if existing else bin_dir
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["CLOUDSDK_CORE_DISABLE_PROMPTS"] = "1"
     return env
+
+
+_DEFAULT_BQ_CLI_TIMEOUT = 120
+
+
+def _bq_cli_timeout() -> int:
+    """Timeout in seconds from BQ_CLI_TIMEOUT (invalid/non-positive -> default 120)."""
+    raw = os.environ.get("BQ_CLI_TIMEOUT")
+    if raw is None:
+        return _DEFAULT_BQ_CLI_TIMEOUT
+    try:
+        val = int(raw.strip())
+    except (ValueError, AttributeError):
+        return _DEFAULT_BQ_CLI_TIMEOUT
+    return val if val > 0 else _DEFAULT_BQ_CLI_TIMEOUT
 
 
 # schema.json lives in the repo root (3 levels up from rca_copilot_agent/tools/)
@@ -483,38 +551,84 @@ def is_enabled() -> bool:
 def _bq_cli_available() -> bool:
     """True when the bq CLI binary is reachable (checks PATH and fallback locations)."""
     try:
-        r = subprocess.run([_find_bq(), "version"], capture_output=True, timeout=5, env=_sdk_env())
+        r = subprocess.run(
+            [_find_bq(), "version"],
+            capture_output=True,
+            timeout=5,
+            env=_sdk_env(),
+        )
         return r.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
+
+
+def _kill_process_tree(proc) -> None:
+    """Best-effort kill of proc and its children, then reap without ever hanging."""
+    if proc is None:
+        return
+    try:
+        if os.name == "nt":
+            # bq.cmd -> cmd.exe -> python: proc.kill() would only hit cmd.exe.
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                capture_output=True,
+                timeout=10,
+            )
+        else:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (OSError, AttributeError):
+                proc.kill()
+    except Exception as exc:  # cleanup must never raise
+        logger.warning("bq process cleanup failed: %s", exc)
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    try:
+        proc.communicate(timeout=5)
+    except Exception:
+        pass  # second TimeoutExpired or closed pipes: give up, don't hang
 
 
 def _bq_cli_execute(sql: str, project: str, max_rows: int = 100) -> QueryResult:
     """
     Execute a pre-validated SELECT query via the bq CLI subprocess.
     Uses gcloud auth login credentials, which often differ from ADC.
+    SQL is sent on stdin (bq reads it when no positional query is given), so it
+    is immune to Windows command-line quoting/length problems.
     """
+    timeout = _bq_cli_timeout()
+    popen_kwargs = {}
+    if os.name != "nt":
+        # Own process group so a timeout can kill a wrapper script's children too.
+        popen_kwargs["start_new_session"] = True
+    proc = None
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             [
                 _find_bq(),
                 f"--project_id={project}",
                 "--quiet",
+                "--headless",
                 "query",
                 "--nouse_legacy_sql",
                 "--format=json",
                 f"--max_rows={max_rows}",
-                sql,
             ],
-            capture_output=True,
-            text=True,
-            timeout=60,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             env=_sdk_env(),
+            **popen_kwargs,
         )
-        stderr = proc.stderr.strip()
-        stdout = proc.stdout.strip()
+        # Bytes in/out: text mode would translate \n -> \r\n on Windows.
+        out_b, err_b = proc.communicate(input=sql.encode("utf-8"), timeout=timeout)
+        stderr = (err_b or b"").decode("utf-8", errors="replace").strip()
+        stdout = (out_b or b"").decode("utf-8", errors="replace").strip()
+        returncode = proc.returncode
 
-        if proc.returncode != 0:
+        if returncode != 0:
             return QueryResult(success=False, error=stderr or stdout, sql=sql)
 
         if not stdout or stdout in ("[]", ""):
@@ -534,24 +648,29 @@ def _bq_cli_execute(sql: str, project: str, max_rows: int = 100) -> QueryResult:
         )
 
     except subprocess.TimeoutExpired:
-        return QueryResult(success=False, error="bq CLI query timed out (60s)", sql=sql)
+        _kill_process_tree(proc)
+        return QueryResult(success=False, error=f"bq CLI query timed out ({timeout}s)", sql=sql)
     except json.JSONDecodeError as exc:
         return QueryResult(success=False, error=f"bq CLI returned non-JSON output: {exc}", sql=sql)
     except Exception as exc:
         return QueryResult(success=False, error=f"bq CLI error: {exc}", sql=sql)
 
 
-def query_bigquery(sql: str, rationale: str = "") -> str:
-    """Execute a read-only BigQuery query via bq CLI. Returns LLM-friendly result string."""
+def query_bigquery_result(sql: str, rationale: str = "") -> QueryResult:
+    """Validate and execute a read-only query via bq CLI. Returns the structured QueryResult."""
     if not _executors:
         raise RuntimeError(_BQ_UNAVAILABLE)
     executor = _pick_executor(sql)
     is_valid, error = executor.validate_query(sql)
     if not is_valid:
-        return QueryResult(success=False, error=error, sql=sql).to_llm_context()
+        return QueryResult(success=False, error=error, sql=sql)
     logger.info(f"[BQ] billing_project={executor.project} | {rationale}\n  SQL: {sql[:200]}")
-    result = _bq_cli_execute(sql, executor.project, max_rows=executor.max_rows)
-    return result.to_llm_context()
+    return _bq_cli_execute(sql, executor.project, max_rows=executor.max_rows)
+
+
+def query_bigquery(sql: str, rationale: str = "") -> str:
+    """Execute a read-only BigQuery query via bq CLI. Returns LLM-friendly result string."""
+    return query_bigquery_result(sql, rationale).to_llm_context()
 
 
 def lookup_schema(table_pattern: str = "") -> str:

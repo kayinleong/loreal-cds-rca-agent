@@ -4,6 +4,7 @@ description: >
   Root Cause Analysis agent for L'Oréal SPACE CDS ServiceNow incidents.
   Uses Bash tool to call rca_copilot_agent/run_tool.py — no MCP server required.
   Replaces snow-mcp/* MCP tool calls for environments where MCP is not allowed.
+  Works on macOS and Windows.
 invocation: /rca-copilot
 ---
 
@@ -14,33 +15,51 @@ All tool calls become `Bash` invocations against `run_tool.py`.
 
 ## Prerequisites
 
-1. Python virtual environment activated: `source .venv/bin/activate`
+1. Python virtual environment activated (see "Platform setup" below)
 2. `.env` file present with `COOKIE` and `X_USERTOKEN` set (see `.env.example`)
-3. gcloud ADC configured: `gcloud auth application-default login`
+3. gcloud user login with an @loreal.com account: `gcloud auth login` (BigQuery runs through the `bq` CLI; ADC is NOT needed)
 4. `schema.json` present in repo root
 
-## Tool Invocation Reference
+## Platform setup (macOS / Windows)
 
-Every former `snow-mcp/<tool>` MCP call maps to a `run_tool.py` Bash call:
+- **Activate the venv** (once per terminal): macOS `source .venv/bin/activate`; Windows PowerShell `.venv\Scripts\Activate.ps1`; cmd `.venv\Scripts\activate.bat`. Then `python rca_copilot_agent/run_tool.py …` works on both (forward slashes are fine on Windows).
+- **Args file creation:** prefer the `Write` tool. Terminal fallback —
+  macOS/Linux: `mkdir -p .rca_tmp && cat > .rca_tmp/q.json <<'EOF'` … `EOF`;
+  Windows PowerShell: `New-Item -ItemType Directory -Force .rca_tmp | Out-Null` then `Set-Content -Encoding utf8 -Path .rca_tmp\q.json -Value @'` … `'@` (single-quoted here-string is literal; the closing `'@` must start its own line).
+- **Google Cloud SDK** (`bq`, `gcloud`) is auto-detected from PATH and standard install dirs (incl. Windows `%LOCALAPPDATA%\Google\Cloud SDK\…`). Override with `BQ_BIN` / `GCLOUD_BIN`. Query timeout: `BQ_CLI_TIMEOUT` (default 120 s). The login is checked automatically at startup.
+- Output is UTF-8 on all platforms.
 
-| Task | Bash command |
-|------|-------------|
-| List local incidents | `python rca_copilot_agent/run_tool.py list_incidents --json '{}'` |
-| Fetch from SNOW URL | `python rca_copilot_agent/run_tool.py fetch_incidents --json '{"list_url": "..."}'` |
-| Fetch single incident | `python rca_copilot_agent/run_tool.py get_incident --json '{"incident_number": "INCx"}'` |
-| Read local incident text | `python rca_copilot_agent/run_tool.py get_incident_summary --json '{"incident_number": "INCx"}'` |
-| **Full analysis (use this)** | `python rca_copilot_agent/run_tool.py analyze_incident --json '{"incident_number": "INCx"}'` |
-| Search local incidents | `python rca_copilot_agent/run_tool.py search_incidents --json '{"keyword": "...", "section": "all"}'` |
-| Extract identifiers | `python rca_copilot_agent/run_tool.py extract_identifiers --json '{"incident_number": "INCx"}'` |
-| Download attachments | `python rca_copilot_agent/run_tool.py download_attachments --json '{"incident_number": "INCx"}'` |
-| Post comment to SNOW | `python rca_copilot_agent/run_tool.py post_comment --json '{"incident_number": "INCx", "text": "...", "as_work_note": false}'` |
-| List BQ tables | `python rca_copilot_agent/run_tool.py list_bq_tables --json '{}'` |
-| Get table schema | `python rca_copilot_agent/run_tool.py get_schema --json '{"table_name": "purchase"}'` |
-| Query BigQuery | `python rca_copilot_agent/run_tool.py query_bigquery --json '{"sql": "SELECT ... LIMIT 10", "rationale": "..."}'` |
-| **Save RCA report (MANDATORY)** | `python rca_copilot_agent/run_tool.py save_rca_report --json '{"incident_number": "INCx", "report_text": "..."}'` |
-| **Send email (MANDATORY, once)** | `python rca_copilot_agent/run_tool.py send_rca_email --json '{"session_summary": "...", "subject": "RCA Complete — INCx"}'` |
+## How to pass arguments (cross-platform)
+
+- **Simple values — `--arg key=value`** (repeatable; `true`/`false` become booleans). Works in zsh/bash, PowerShell and cmd.
+- **Free text — args file + `--json-file` (RECOMMENDED).** Use the `Write` tool to create `.rca_tmp/<tool>.json` (repo root, gitignored; UTF-8, BOM tolerated) containing a JSON object of the arguments, then run `python rca_copilot_agent/run_tool.py <tool> --json-file .rca_tmp/<tool>.json`. **Required** for `query_bigquery`, `save_rca_report`, `send_rca_email`, `post_comment`, `search_incidents`, `fetch_incidents` (URLs contain `&`, `%`).
+- `--json -` reads JSON from stdin. **Do NOT use `--json '<JSON>'`** — POSIX-shell-only and breaks on apostrophes.
+
+## Tool Invocation Reference (15 tools)
+
+`RT` = `python rca_copilot_agent/run_tool.py`
+
+| Task | Command |
+|------|---------|
+| List local incidents | `RT list_incidents` |
+| Fetch from SNOW URL | args file `{"list_url": "<URL>", "download_attachments": false, "limit": 500}` → `RT fetch_incidents --json-file .rca_tmp/fetch_incidents.json` |
+| Fetch single incident | `RT get_incident --arg incident_number=INCx` |
+| Read local incident text | `RT get_incident_summary --arg incident_number=INCx` |
+| **Full analysis (use this)** | `RT analyze_incident --arg incident_number=INCx` |
+| Search local incidents | args file `{"keyword": "...", "section": "all"}` → `RT search_incidents --json-file .rca_tmp/search_incidents.json` |
+| Extract identifiers | `RT extract_identifiers --arg incident_number=INCx` |
+| Download attachments | `RT download_attachments --arg incident_number=INCx` |
+| Post comment to SNOW (gated) | args file `{"incident_number": "INCx", "text": "...", "as_work_note": false}` → `RT post_comment --json-file .rca_tmp/post_comment.json` (preview first; add `"confirmed": true` only after user approval) |
+| List BQ tables | `RT list_bq_tables` |
+| Get table schema | `RT get_schema --arg table_name=purchase` |
+| Query BigQuery | args file `{"sql": "SELECT ... LIMIT 10", "rationale": "...", "incident_number": "INCx"}` → `RT query_bigquery --json-file .rca_tmp/query_bigquery.json` |
+| **Get RCA template** | `RT get_rca_template` (no args; once per session) |
+| **Save RCA report (MANDATORY)** | args file `{"incident_number": "INCx", "report_text": "<full report>"}` → `RT save_rca_report --json-file .rca_tmp/save_rca_report.json` |
+| **Send email (MANDATORY, once)** | args file `{"session_summary": "...", "subject": "RCA Complete — INCx"}` → `RT send_rca_email --json-file .rca_tmp/send_rca_email.json` (optional `incident_numbers` list) |
 
 ## RCA Workflow (No-MCP)
+
+Mandatory sequence: `analyze_incident` → `get_rca_template` (once per session) → `list_bq_tables` / `get_schema` / `query_bigquery` (with `incident_number`) → write RCA → `save_rca_report` (fix & retry on `✗`) → `send_rca_email` once.
 
 ### Step 0 — Detect intent
 
@@ -55,14 +74,14 @@ Read the user's message and classify:
 
 ### Step 1 — Ensure incident data is available
 
-**If prompt contains a ServiceNow URL:**
+**If prompt contains a ServiceNow URL:** write `.rca_tmp/fetch_incidents.json` = `{"list_url": "<URL>", "download_attachments": false, "limit": 500}`, then:
 ```bash
-python rca_copilot_agent/run_tool.py fetch_incidents --json '{"list_url": "<URL>", "download_attachments": false, "limit": 500}'
+python rca_copilot_agent/run_tool.py fetch_incidents --json-file .rca_tmp/fetch_incidents.json
 ```
 
 **If no URL — check what is already downloaded:**
 ```bash
-python rca_copilot_agent/run_tool.py list_incidents --json '{}'
+python rca_copilot_agent/run_tool.py list_incidents
 ```
 If output says no incidents found, ask user to provide a SNOW list-view URL.
 
@@ -71,7 +90,7 @@ If output says no incidents found, ask user to provide a SNOW list-view URL.
 **Single-ticket mode:**
 
 ```bash
-python rca_copilot_agent/run_tool.py analyze_incident --json '{"incident_number": "<INCx>"}'
+python rca_copilot_agent/run_tool.py analyze_incident --arg incident_number=<INCx>
 ```
 
 This one call returns: full incident summary + extracted identifiers + attachment download status.
@@ -79,32 +98,41 @@ Do NOT call `get_incident_summary`, `extract_identifiers`, and `download_attachm
 
 Read the result carefully: description, comments, work notes, attachment paths, identifiers found.
 
+**Get the RCA template — once per session, before writing the first RCA:**
+```bash
+python rca_copilot_agent/run_tool.py get_rca_template
+```
+
 **If ANY identifiers found** (order IDs, customer codes, phone numbers, emails, EANs, LUCID):
 
 ```bash
 # Discover which table to query (reads schema.json — instant, no BQ cost)
-python rca_copilot_agent/run_tool.py list_bq_tables --json '{}'
+python rca_copilot_agent/run_tool.py list_bq_tables
 
 # Get column names and query patterns for the target table
-python rca_copilot_agent/run_tool.py get_schema --json '{"table_name": "<table>"}'
+python rca_copilot_agent/run_tool.py get_schema --arg table_name=<table>
 
-# Run the query — always include LIMIT
-python rca_copilot_agent/run_tool.py query_bigquery --json '{"sql": "<SQL with LIMIT>", "rationale": "<why>"}'
+# Run the query (args file with sql incl. LIMIT, rationale, incident_number)
+python rca_copilot_agent/run_tool.py query_bigquery --json-file .rca_tmp/query_bigquery.json
 ```
+
+**ALWAYS pass `incident_number` in the `query_bigquery` args during an RCA.** The query (SQL, rationale, row count / error — never result rows) is recorded and appended to the saved report as "## Evidence — BigQuery queries run".
 
 Refer to `rca_copilot_agent/AGENTS.md` for the identifier → table mapping and query rules.
 
-**Write the RCA report** (format: WHAT HAPPENED / WHAT WE CHECKED / WHAT WE FOUND / WHAT WE NEED).
+**Write the RCA report** in the format returned by `get_rca_template` (see "RCA Report Format" below).
 
-**Save the report — MANDATORY:**
+**Save the report — MANDATORY:** write `.rca_tmp/save_rca_report.json` = `{"incident_number": "<INCx>", "report_text": "<full report text>"}`, then:
 ```bash
-python rca_copilot_agent/run_tool.py save_rca_report --json '{"incident_number": "<INCx>", "report_text": "<full report text>"}'
+python rca_copilot_agent/run_tool.py save_rca_report --json-file .rca_tmp/save_rca_report.json
 ```
+`save_rca_report` validates the report. If it returns `✗ RCA report NOT saved …`, fix the missing/empty sections and call again. Warnings (shortform group names, placeholders, no `→ Checked` lines) don't block but should be fixed. The ticket metadata header and the BigQuery evidence appendix are added automatically — never write them yourself. `save_rca_report` accepts common heading variants, but still use the exact `###` headings from `get_rca_template`. Evidence for a report covers queries recorded since the incident's last emailed report, within `RCA_SESSION_WINDOW_HOURS` (default 24); re-saving before emailing keeps it.
 
-**Send email — MANDATORY, once per session, after ALL reports are saved:**
+**Send email — MANDATORY, once per session, after ALL reports are saved:** write `.rca_tmp/send_rca_email.json` = `{"session_summary": "<plain text: which incidents, key findings>", "subject": "RCA Complete — <INCx>"}`, then:
 ```bash
-python rca_copilot_agent/run_tool.py send_rca_email --json '{"session_summary": "<plain text: which incidents, key findings>", "subject": "RCA Complete — <INCx>"}'
+python rca_copilot_agent/run_tool.py send_rca_email --json-file .rca_tmp/send_rca_email.json
 ```
+It attaches saved, not-yet-emailed reports (latest per incident). Pass `incident_numbers` = the incidents investigated in this session (args file `{"session_summary": "...", "subject": "...", "incident_numbers": ["INC1","INC2"]}`); without it, all saved-but-unsent reports from the last `RCA_SESSION_WINDOW_HOURS` hours (default 24) are attached. The result ends with `Attached incidents: ...` — check it matches what you investigated. Works across separate CLI calls.
 
 Do NOT ask the user for verification before calling `send_rca_email`. The email IS the notification.
 
@@ -113,66 +141,26 @@ open incident. Call `send_rca_email` once at the end with all incidents in the `
 
 ### Step 3 — Post comment (only when post-comment intent detected)
 
-Show all RCA reports to the user first. Ask: "Ready to post the above RCA(s) as comments. Confirm?"
+`post_comment` has a code-enforced gate: without `"confirmed": true` it returns a preview and posts nothing.
 
-On confirmation:
-```bash
-python rca_copilot_agent/run_tool.py post_comment --json '{"incident_number": "<INCx>", "text": "<RCA text>", "as_work_note": false}'
-```
+1. Call `post_comment` without `confirmed` for each incident to get the preview.
+2. Show the RCA reports/previews to the user. Ask: "Ready to post the above RCA(s) as comments. Confirm?"
+3. Only after explicit approval, call `post_comment` again with `"confirmed": true`.
 
 Never post without confirmation. The `post_comment` tool writes live to ServiceNow.
 
 ## RCA Report Format (MANDATORY)
 
+**Single source of truth: the `get_rca_template` tool** (defined in `rca_copilot_agent/tools/rca_report_tool.py`). It returns the exact template, writing rules and the full canonical assignment-group table — always use FULL canonical group names, never shortforms (`CDS L3`, `LOY`, `MARS team`, ...).
+
+Skeleton reminder — four `###` sections, none empty:
+
 ```
 ### WHAT HAPPENED
-One sentence — the symptom as reported by the user, not the root cause.
-
-### WHAT WE CHECKED
-→ Checked [source] — [what you found]
-→ Checked [source] — [what you found]
-
+### WHAT WE CHECKED        (→ Checked [source] — [finding] lines)
 ### WHAT WE FOUND
-One or two sentences stating the root cause with evidence.
-If unclear, state what is known vs. unknown.
-
 ### WHAT WE NEED / DID
-- Bullet list of action items with owner if named in the ticket
 ```
-
-### Rule: FULL canonical assignment-group names — never shortforms
-
-When the report references a SNOW assignment group (action items in `### WHAT WE NEED / DID`, evidence in `### WHAT WE CHECKED`, etc.), **always write the verbatim canonical group name as it appears in ServiceNow.** Never use operator shortforms (`CDS L3`, `LOY`, `MARS team`, `iBeauty`, `NGL`, etc.) — they're ambiguous outside the team and they don't match the SNOW Reassign-Group picker.
-
-Example:
-- ✓ "Assign to `APAC - SGP - SPACE CDS SAPMENA L3 Support` as the issue is tracked in DFCT0268807."
-- ✗ "Assign to CDS L3 team as the issue is tracked in DFCT0268807."
-
-Use this shortform → canonical mapping to translate work-note shorthand to the full SNOW group name:
-
-| Shorthand seen in work-notes | Full canonical SNOW group |
-|---|---|
-| `CDS L2`, `CDS L2 team`, `SAPMENA CDS group` | `APAC - SGP - SPACE CDS SAPMENA L2 Support` |
-| `CDS L3`, `CDS L3 team` | `APAC - SGP - SPACE CDS SAPMENA L3 Support` |
-| `LOY`, `LOY team`, `Loyalty`, `Loyalty team` (loyalty backend) | `APAC - ZN - O+O.NGLORA - L2` |
-| `LOY L3`, `Loyalty L3` | `APAC - CHN - SPACE Loyalty L3 Support` |
-| `MARS`, `MARS team`, `MARS Ops`, `MARS Operations`, `retail Ops team` | `APAC - ZN - O+O OMNISALES.RETAIL - CAPGEMINI-GDC-MARS - RUN - L2` |
-| `iBeauty`, `iBeauty team`, `IBeauty team`, `iBeauty L2` | `APAC - ZN - iBeauty 2.0 - Retail - L2` |
-| `SFCC`, `SFCC L2` | `APAC - ZN - O+O ONLINE.CED - CAPGEMINI-GDC-SPACE-GDS - RUN - L2` |
-| `CRM`, `SFMC team`, `SFDC team`, `CE team`, `CE Ops team` | `APAC - ZN - O+O.CRM - L2` |
-| `NGL`, `NGL L2`, `NGLORA` | `APAC - ZN - O+O.NGLORA - L2` |
-| `Operations`, `Ops`, `OPS team` (only when no more specific match) | `APAC - ZN - O+O.OPERATIONS - L2` |
-| `Hypercare`, `Hypercare team`, `Hypercare group`, `LS team`, `LS Hypercare`, `Aesop hypercare` | `APAC - ZN - SPACE B2C Hypercare` |
-| `HIP`, `HIP team`, `Infrastructure team`, `Azure team` (HIP-adjacent) | `TECH FNDN - WW - HIP INCIDENT L2` |
-| `THN Retail`, `Thailand Retail` | `APAC - THN - Retail IT` |
-
-L3 / specialised groups that appear in real work-notes (also use full names):
-- `APAC - SGP - SPACE CDS SAPMENA L3 Support`
-- `APAC - CHN - SPACE Loyalty L3 Support`
-- `APAC - SGP - SPACE Loyalty L3 Support`
-- `INFRA - WW - Linux Unix ACN - L3`
-
-If the right canonical group is uncertain, pick the closest match and add `[USER-CONFIRM]` after it in the report so the reviewer knows to verify.
 
 ## Output Rules
 
