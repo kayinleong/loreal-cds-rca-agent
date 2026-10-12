@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""
+r"""
 run_tool.py — Unified CLI for rca_copilot_agent tools (no MCP server required).
 
 Usage (cross-platform; pick ONE way to pass arguments):
