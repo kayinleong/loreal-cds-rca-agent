@@ -198,7 +198,8 @@ def check_account_output(account):
 def get_gcloud_account(gcloud_path, run=subprocess.run):
     try:
         res = run([gcloud_path, "auth", "list", "--filter=status:ACTIVE", "--format=value(account)"],
-                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=15)
+                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=15,
+                  stdin=subprocess.DEVNULL)
         if res.returncode == 0 and res.stdout.strip():
             return res.stdout.strip().splitlines()[0]
     except Exception:
@@ -287,11 +288,20 @@ def maybe_reexec(argv):
                            realpath(os.path.join(REPO, ".venv")), os.environ):
         env = dict(os.environ)
         env["RCA_VENV_REEXEC"] = "1"
-        sys.exit(subprocess.call([vpy, os.path.abspath(__file__)] + list(argv), env=env))
+        try:
+            sys.exit(subprocess.call([vpy, os.path.abspath(__file__)] + list(argv), env=env))
+        except OSError:
+            print(".venv exists but its Python can't start - re-run setup with --recreate "
+                  "(checking with the current interpreter instead).")
 
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
     if "-h" in argv or "--help" in argv:
         print(__doc__)
         return 0
@@ -305,4 +315,7 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        sys.exit(130)

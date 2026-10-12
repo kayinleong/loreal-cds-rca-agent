@@ -60,8 +60,13 @@ def _net_args(index_url=None, extra_index_url=None, wheelhouse=None, proxy=None)
 
 def build_pip_args(python, requirements=None, upgrade_pip=False, index_url=None,
                    extra_index_url=None, wheelhouse=None, proxy=None, allow_source=False):
-    """Build the full pip command line. Never adds --trusted-host."""
-    cmd = [python, "-m", "pip", "install", "--disable-pip-version-check"]
+    """Build the full pip command line. Never adds --trusted-host.
+
+    --no-input: never block on a credential prompt (stdout is piped, it would look like a hang).
+    --retries/--timeout: fail in seconds, not minutes, when PyPI is blocked.
+    """
+    cmd = [python, "-m", "pip", "install", "--disable-pip-version-check", "--no-input",
+           "--retries", "3", "--timeout", "30"]
     cmd += _net_args(index_url, extra_index_url, wheelhouse, proxy)
     if upgrade_pip:
         return cmd + ["--upgrade", "pip"]
@@ -91,27 +96,64 @@ def summarize(results):
     return 0
 
 
+NETWORK_MARKERS = (
+    "ProxyError", "407 Proxy Authentication", "SSLError", "CERTIFICATE_VERIFY_FAILED",
+    "ConnectionError", "NewConnectionError", "Max retries exceeded", "HTTP error 403",
+    "Could not fetch URL", "Temporary failure in name resolution", "getaddrinfo failed",
+    "Name or service not known", "ReadTimeoutError", "ConnectTimeoutError",
+)
+
+
+def is_network_failure(output):
+    """True if pip's output looks like a network/proxy/TLS problem (not a missing wheel)."""
+    text = output or ""
+    return any(m.lower() in text.lower() for m in NETWORK_MARKERS)
+
+
 def pip_failure_hints(output):
-    """Targeted hints from pip's output text."""
-    low = (output or "").lower()
+    """Targeted hints from pip's output text. Matches specific markers, not bare substrings."""
+    text = output or ""
+    low = text.lower()
+
+    def has(*markers):
+        return any(m.lower() in low for m in markers)
+
     hints = []
-    if "proxyerror" in low or "proxy" in low or "407" in low:
+    if has("CERTIFICATE_VERIFY_FAILED", "SSLError"):
+        hints.append("SSL inspection suspected: set PIP_CERT=<corporate-root.pem> (or pass --cert <pem>) first; "
+                     "persist it with `python -m pip config set global.cert <path>`. pip on Python 3.10/3.11 "
+                     "may be too old to use the OS trust store, so even the pip upgrade can fail until then.")
+    if has("ProxyError", "407 Proxy Authentication"):
         hints.append("Proxy problem: set HTTPS_PROXY / HTTP_PROXY, or pass --proxy http://user@host:port.")
-    if "ssl" in low or "certificate" in low:
-        hints.append("SSL inspection suspected: re-run (pip is upgraded first and uses the OS trust "
-                     "store on Python 3.10+), or set PIP_CERT / REQUESTS_CA_BUNDLE to your corporate CA bundle.")
-    if ("could not find a version" in low or "no matching distribution" in low
-            or "no versions of" in low):
+    if has("No matching distribution found", "Could not find a version that satisfies"):
         hints.append("No wheel for this Python/platform: install Python 3.12 and re-run, "
                      "or use --allow-source if you have a compiler.")
-    if ("max retries" in low or "connection" in low or "name or service" in low
-            or "getaddrinfo" in low or "timed out" in low or "could not fetch url" in low
-            or "403" in low or "forbidden" in low):
+    if has("ConnectionError", "NewConnectionError", "Max retries exceeded", "HTTP error 403",
+           "Could not fetch URL", "Temporary failure in name resolution", "getaddrinfo failed",
+           "Name or service not known", "ReadTimeoutError", "ConnectTimeoutError"):
         hints.append("PyPI unreachable/blocked: use --index-url <internal mirror> or "
                      "--wheelhouse <dir with pre-downloaded wheels>.")
     if not hints:
         hints.append("See the pip output above. Options: --index-url <mirror>, --wheelhouse <dir>, --proxy <url>.")
     return hints
+
+
+LONG_PATH_LIMIT = 100
+
+
+def long_path_hint():
+    return ("Windows MAX_PATH: torch/sentence-transformers have very deep file paths and can fail to install. "
+            "Clone the repo to a short path such as C:\\src\\rca, or enable LongPathsEnabled "
+            "(Windows setting 'Enable Win32 long paths'; needs admin/IT) and use a new terminal.")
+
+
+def long_path_warning(repo=None, osname=None):
+    """Return the warning text when on Windows with a long repo path, else None."""
+    repo = REPO if repo is None else repo
+    osname = os.name if osname is None else osname
+    if osname == "nt" and len(str(repo)) > LONG_PATH_LIMIT:
+        return "WARNING: repo path is {} characters long. ".format(len(str(repo))) + long_path_hint()
+    return None
 
 
 # ---------------------------------------------------------------- side-effecting
@@ -121,21 +163,43 @@ def banner(text):
     sys.stdout.flush()
 
 
+def _safe_write(text):
+    """Write to stdout without ever raising on an un-encodable character (cp1252 consoles)."""
+    try:
+        sys.stdout.write(text)
+    except UnicodeEncodeError:
+        enc = getattr(sys.stdout, "encoding", None) or "ascii"
+        sys.stdout.write(text.encode(enc, "replace").decode(enc))
+    sys.stdout.flush()
+
+
+def _reconfigure_streams():
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
+def running_inside_venv():
+    return os.path.realpath(sys.prefix) == os.path.realpath(VENV_DIR)
+
+
 def run_streaming(cmd):
     """Run cmd, echo output live, return (returncode, captured_text)."""
     sys.stdout.write("$ {}\n".format(" ".join(cmd)))
     sys.stdout.flush()
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                universal_newlines=True, errors="replace", cwd=REPO)
+                                stdin=subprocess.DEVNULL, universal_newlines=True,
+                                errors="replace", cwd=REPO)
     except OSError as exc:
         msg = "could not start {}: {}".format(cmd[0], exc)
         sys.stdout.write(msg + "\n")
         return 127, msg
     captured = []
     for line in proc.stdout:
-        sys.stdout.write(line)
-        sys.stdout.flush()
+        _safe_write(line)
         captured.append(line)
     proc.wait()
     return proc.returncode, "".join(captured)
@@ -219,6 +283,8 @@ def install_agent(py, key, opts):
         if rc != 0:
             for h in pip_failure_hints(out):
                 print("HINT: " + h)
+            if kind == "retrieval" and os.name == "nt":
+                print("HINT: " + long_path_hint())
             if kind == "core":
                 return {"agent": key, "status": "failed", "note": "pip install failed"}
             notes.append("installed, kNN retrieval unavailable")
@@ -265,6 +331,7 @@ def build_parser():
 
 
 def main(argv=None):
+    _reconfigure_streams()
     opts = build_parser().parse_args(argv)
     keys = [k.strip() for k in opts.agents.split(",") if k.strip()]
     bad = [k for k in keys if k not in _reqs.AGENT_KEYS]
@@ -281,6 +348,16 @@ def main(argv=None):
     if level == "warn":
         print("WARNING: " + msg)
 
+    if opts.recreate and running_inside_venv():
+        print("ERROR: --recreate would delete the .venv this Python is running from. "
+              "Run setup with a system Python instead (./setup.sh --recreate or setup.cmd --recreate), "
+              "not from inside .venv.")
+        return 1
+
+    warn = long_path_warning()
+    if warn:
+        print(warn)
+
     banner("Virtualenv")
     if not ensure_venv(opts.recreate):
         return 1
@@ -291,9 +368,12 @@ def main(argv=None):
         py, upgrade_pip=True, index_url=opts.index_url, extra_index_url=opts.extra_index_url,
         wheelhouse=opts.wheelhouse, proxy=opts.proxy))
     if rc != 0:
-        print("WARNING: pip upgrade failed; continuing with the bundled pip.")
         for h in pip_failure_hints(out):
             print("HINT: " + h)
+        if is_network_failure(out) and not opts.wheelhouse:
+            print("ERROR: cannot reach the package index; stopping early instead of retrying every agent.")
+            return 1
+        print("WARNING: pip upgrade failed; continuing with the bundled pip.")
 
     results = [install_agent(py, k, opts) for k in keys]
 
@@ -330,4 +410,8 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        sys.stderr.write("\nInterrupted.\n")
+        sys.exit(130)
