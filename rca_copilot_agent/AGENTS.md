@@ -1,7 +1,7 @@
 # AGENTS.md — RCA Copilot Agent
 
-> Instruction schema for GitHub Copilot (or any MCP-aware LLM client).
-> All LLM reasoning stays in the client. This server exposes only pure-function tools.
+> Instruction schema for GitHub Copilot, Claude Code or any LLM client that can run terminal commands.
+> All LLM reasoning stays in the client. The tools are pure functions invoked through `run_tool.py` (CLI only).
 
 ## Purpose
 
@@ -27,39 +27,37 @@ Validate root causes with live BigQuery queries and produce structured RCA repor
 | `get_rca_template` | Return the canonical RCA template, writing rules and full canonical assignment-group table. Call once per session before writing the first RCA |
 | `save_rca_report` | **MANDATORY** — validate and save every completed RCA report to disk (rejects missing/empty sections) |
 | `send_rca_email` | **MANDATORY** — notify the human once the session is done (attaches every saved, not-yet-emailed report) |
-| `auto_credential_refresh` | Automatic startup tool — not callable; runs at MCP server start to detect and renew stale ServiceNow session cookies via browser SSO |
-| `auto_gcloud_auth` | Automatic startup tool — not callable; runs after SNOW auth to verify the active gcloud account is a loreal.com account (user login via `gcloud auth login`; ADC is not used); triggers login if not |
+| `auto_credential_refresh` | Automatic startup tool — not callable; runs at CLI startup to detect and renew stale ServiceNow session cookies via browser SSO |
+| `auto_gcloud_auth` | Automatic startup tool — not callable; runs after SNOW auth to verify the active gcloud account is a loreal.com account (user login via `gcloud auth login`; no ADC needed); triggers login if not |
 
 ## Environment Setup
 
 ### ServiceNow Credentials (auto-refreshed)
 
-At startup the MCP server checks whether `COOKIE` and `X_USERTOKEN` in `.env` are valid.
+At CLI startup `run_tool.py` checks whether `COOKIE` and `X_USERTOKEN` in `.env` are valid.
 If missing or expired, a Microsoft Edge window opens automatically for SSO login.
 Credentials are written back to `.env` after login — no manual DevTools copy-paste needed.
+`playwright` is installed by the setup command (no `playwright install`; the installed Edge is used).
+If playwright is missing, the CLI falls back to the manual instructions in `.env.example`.
 
-**First-time setup (one-time only):**
-```bash
-pip install playwright
-```
+## Setup and Platform Notes (macOS / Windows)
 
-Edge is already installed — no additional browser download required.
-
-If playwright is not installed, the server falls back to the manual instructions in `.env.example`.
-
-## Platform Setup (macOS / Windows)
-
-- **Activate the venv first** (once per terminal): macOS `source .venv/bin/activate`; Windows PowerShell `.venv\Scripts\Activate.ps1`; Windows cmd `.venv\Scripts\activate.bat`. Then `python rca_copilot_agent/run_tool.py ...` works on both (forward slashes are fine on Windows).
-- **Creating an args file** (see below): prefer the host's file-write tool. Terminal fallback —
-  macOS/Linux: `mkdir -p .rca_tmp && cat > .rca_tmp/q.json <<'EOF'` ... `EOF`;
-  Windows PowerShell: `New-Item -ItemType Directory -Force .rca_tmp | Out-Null` then `Set-Content -Encoding utf8 -Path .rca_tmp\q.json -Value @'` ... `'@` (single-quoted here-string is literal; the closing `'@` must start its own line).
-- **BigQuery** runs through the `bq` CLI on gcloud user credentials: `gcloud auth login` with an @loreal.com account (checked automatically at startup). The Google Cloud SDK is auto-detected (PATH, standard install dirs incl. Windows `%LOCALAPPDATA%\Google\Cloud SDK\...`); override with `BQ_BIN` / `GCLOUD_BIN`. Timeout: `BQ_CLI_TIMEOUT` (default 120 s).
+- **Prerequisites:** Python 3.10+ (64-bit), Google Cloud SDK (`gcloud`, `bq`), Microsoft Edge, git.
+- **One-command setup** (from the repo root, once per machine): macOS/Linux `./setup.sh`; Windows `setup.cmd` (double-click, or run in cmd/PowerShell); or the VS Code task "RCA: Setup (all agents)". It finds Python >= 3.10, creates `<repo>/.venv`, installs all three Copilot agents (per-agent: one failing does not block the others), then runs the doctor. Optional flags (passed through to `scripts/bootstrap.py`): `--agents`, `--skip-retrieval`, `--index-url`, `--proxy`, `--wheelhouse`, `--recreate`.
+- **Self-check (offline):** macOS/Linux `python3 scripts/doctor.py`; Windows `py -3 scripts\doctor.py`; or the VS Code task "RCA: Doctor". Checks packages, gcloud/bq, Edge, gcloud account domain, `schema.json` and `.env` presence.
+- **No venv activation needed:** `run_tool.py` re-runs itself inside `<repo>/.venv` automatically. Invoke it as `python rca_copilot_agent/run_tool.py …` (macOS: `python3`; Windows: `python` or `py -3`; forward slashes are fine on Windows).
+- **Missing package:** if `run_tool.py` prints "Missing Python package … Run ./setup.sh … or setup.cmd" (or any `ModuleNotFoundError`), run the setup command for the platform, then retry the failed command once. If setup reports failures, show the doctor output to the user and stop.
+- **Unknown tool name:** `run_tool.py` lists the valid tools.
+- **Dependencies:** `rca_copilot_agent/requirements.txt` (requests, urllib3, python-dotenv, playwright; no `playwright install` — the installed Edge is used). Manual fallback inside the venv: `python -m pip install -r rca_copilot_agent/requirements.txt`.
+- **Creating the args file:** prefer the file create/edit tool. Terminal fallback —
+  macOS/Linux: `mkdir -p .rca_tmp && cat > .rca_tmp/q.json <<'EOF'` … `EOF`;
+  Windows PowerShell: `New-Item -ItemType Directory -Force .rca_tmp | Out-Null` then `Set-Content -Encoding utf8 -Path .rca_tmp\q.json -Value @'` … `'@` (single-quoted here-string is literal; the closing `'@` must start its own line).
+- **BigQuery** runs through the `bq` CLI using gcloud user credentials: only `gcloud auth login` with an @loreal.com account is needed (checked automatically at startup; no ADC / `application-default login`). The Google Cloud SDK is auto-detected (PATH and standard install dirs, incl. Windows `%LOCALAPPDATA%\Google\Cloud SDK\…`); override with `BQ_BIN` / `GCLOUD_BIN`. Timeout: `BQ_CLI_TIMEOUT` (default 120 s).
 - Output is UTF-8 on all platforms.
 
-## Running Without MCP (Skills / CLI Mode)
+## Running via the CLI (`run_tool.py`)
 
-L'Oréal's environment does not allow MCP servers. Use `run_tool.py` instead — it wraps every
-tool function and requires no server process. Pick ONE way to pass arguments:
+`run_tool.py` wraps every tool function and needs no server process. Pick ONE way to pass arguments:
 
 | Form | Use for |
 |------|---------|
@@ -101,7 +99,7 @@ python rca_copilot_agent/run_tool.py send_rca_email --json-file .rca_tmp/send_rc
 which orchestrates the full RCA workflow using these CLI commands automatically via the `Bash` tool.
 
 **For GitHub Copilot users:** the `.github/agents/rca_copilot.agent.md` agent definition uses
-the terminal to call `run_tool.py` directly (and file create/edit under `.rca_tmp/` for args files) — no MCP server process needed.
+the terminal to call `run_tool.py` directly (and file create/edit under `.rca_tmp/` for args files).
 
 **All 15 tool names** (valid `<tool_name>` values for `run_tool.py`):
 
@@ -124,7 +122,7 @@ the terminal to call `run_tool.py` directly (and file create/edit under `.rca_tm
 | `send_rca_email` | **MANDATORY** — notify reviewer when session done |
 
 The credential refresh (`auth_tool`) and gcloud login check (`gcloud_tool`) also run automatically
-at CLI startup — same as the MCP server startup sequence.
+at CLI startup.
 
 ## Investigation Workflow
 
@@ -302,7 +300,7 @@ WHAT WE FOUND / WHAT WE NEED / DID; `save_rca_report` validates them.
 **Access:** Read-only via the `bq` CLI on gcloud user credentials — no credentials in `.env` needed; 100-row cap, blocklist, no cost guard  
 **Dialect:** GoogleSQL (backtick refs, SAFE_DIVIDE, UNNEST, etc.)  
 **Schema source:** `schema.json` in repo root — `get_schema` and `list_bq_tables` read all datasets instantly  
-**Auth:** Run `gcloud auth login` (@loreal.com account) if BQ queries fail with auth errors — ADC is not used. SDK auto-detected on macOS and Windows; override with `BQ_BIN` / `GCLOUD_BIN`; timeout `BQ_CLI_TIMEOUT` (default 120 s)
+**Auth:** Run `gcloud auth login` (@loreal.com account) if BQ queries fail with auth errors (no ADC needed). SDK auto-detected on macOS and Windows; override with `BQ_BIN` / `GCLOUD_BIN`; timeout `BQ_CLI_TIMEOUT` (default 120 s)
 
 ### Query Rules (mandatory)
 
