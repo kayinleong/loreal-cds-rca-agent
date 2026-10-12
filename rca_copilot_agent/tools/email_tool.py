@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html as _html
+import re
 import smtplib
 import ssl
 from datetime import datetime
@@ -25,6 +26,15 @@ def _ssl_context(verify: bool = True) -> ssl.SSLContext:
         return ssl.create_default_context(cafile=certifi.where())
     except ImportError:
         return ssl.create_default_context()
+
+
+DEFAULT_SUBJECT = "RCA Analysis Complete — Please Review"
+
+
+def _clean_subject(subject: object) -> str:
+    """Collapse CR/LF runs to a single space (header injection / ValueError); default if empty."""
+    cleaned = re.sub(r"[\r\n]+", " ", "" if subject is None else str(subject)).strip()
+    return cleaned or DEFAULT_SUBJECT
 
 
 def _esc(value: object) -> str:
@@ -54,7 +64,7 @@ def send_rca_email(
     msg = EmailMessage(policy=policy.SMTP)
     msg["From"] = smtp_from
     msg["To"] = ", ".join(smtp_to)
-    msg["Subject"] = subject
+    msg["Subject"] = _clean_subject(subject)
     msg.set_content(html, subtype="html", charset="utf-8", cte="base64")
 
     attached: list[str] = []

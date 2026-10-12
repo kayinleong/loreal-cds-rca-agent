@@ -181,6 +181,30 @@ class SendEmailTests(_Base):
         _, again = self._send({})
         self.assertEqual(len(again), 2)
 
+    def test_mark_emailed_failure_still_success(self):
+        with mock.patch("tools.rca_report_tool.mark_emailed", side_effect=OSError("disk full")):
+            out, _ = self._send({})
+        self.assertTrue(out.startswith("✓"))
+        self.assertIn("⚠ Email sent, but reports could not be marked as emailed (OSError: disk full)", out)
+
+    def test_attached_incidents_line(self):
+        out, _ = self._send({})
+        self.assertIn("Attached incidents: INC1, INC2", out)
+        out2, _ = self._send({})
+        self.assertIn("Attached incidents: none", out2)
+        self.assertNotIn("⚠", out2)
+
+    def test_incident_numbers_string_normalised(self):
+        with mock.patch("tools.rca_report_tool.pending_reports", return_value=[]) as pr:
+            self._send({"incident_numbers": "INC1, INC2  inc3"})
+        self.assertEqual(pr.call_args[0][1], ["INC1", "INC2", "inc3"])
+        with mock.patch("tools.rca_report_tool.pending_reports", return_value=[]) as pr:
+            self._send({"incident_numbers": ["", " INC1 "]})
+        self.assertEqual(pr.call_args[0][1], ["INC1"])
+        with mock.patch("tools.rca_report_tool.pending_reports", return_value=[]) as pr:
+            self._send({"incident_numbers": "  "})
+        self.assertIsNone(pr.call_args[0][1])
+
     def test_smtp_disabled_message(self):
         self.smtp.enabled = False
         with mock.patch("config.load_smtp_config", return_value=self.smtp):

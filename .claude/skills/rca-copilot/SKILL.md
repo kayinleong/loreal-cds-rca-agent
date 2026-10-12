@@ -126,13 +126,13 @@ Refer to `rca_copilot_agent/AGENTS.md` for the identifier → table mapping and 
 ```bash
 python rca_copilot_agent/run_tool.py save_rca_report --json-file .rca_tmp/save_rca_report.json
 ```
-`save_rca_report` validates the report. If it returns `✗ RCA report NOT saved …`, fix the missing/empty sections and call again. Warnings (shortform group names, placeholders, no `→ Checked` lines) don't block but should be fixed. The ticket metadata header and the BigQuery evidence appendix are added automatically — never write them yourself.
+`save_rca_report` validates the report. If it returns `✗ RCA report NOT saved …`, fix the missing/empty sections and call again. Warnings (shortform group names, placeholders, no `→ Checked` lines) don't block but should be fixed. The ticket metadata header and the BigQuery evidence appendix are added automatically — never write them yourself. `save_rca_report` accepts common heading variants, but still use the exact `###` headings from `get_rca_template`. Evidence for a report covers queries recorded since the incident's last emailed report, within `RCA_SESSION_WINDOW_HOURS` (default 24); re-saving before emailing keeps it.
 
 **Send email — MANDATORY, once per session, after ALL reports are saved:** write `.rca_tmp/send_rca_email.json` = `{"session_summary": "<plain text: which incidents, key findings>", "subject": "RCA Complete — <INCx>"}`, then:
 ```bash
 python rca_copilot_agent/run_tool.py send_rca_email --json-file .rca_tmp/send_rca_email.json
 ```
-It attaches every saved, not-yet-emailed report (latest per incident); add `"incident_numbers": [...]` to restrict. Works across separate CLI calls.
+It attaches saved, not-yet-emailed reports (latest per incident). Pass `incident_numbers` = the incidents investigated in this session (args file `{"session_summary": "...", "subject": "...", "incident_numbers": ["INC1","INC2"]}`); without it, all saved-but-unsent reports from the last `RCA_SESSION_WINDOW_HOURS` hours (default 24) are attached. The result ends with `Attached incidents: ...` — check it matches what you investigated. Works across separate CLI calls.
 
 Do NOT ask the user for verification before calling `send_rca_email`. The email IS the notification.
 

@@ -49,6 +49,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -832,9 +833,16 @@ async def _dispatch(name: str, arguments: dict, reports_dir: str) -> str:
 
         from tools.email_tool import send_rca_email as _send
         from tools import rca_report_tool
-        subject = arguments.get("subject", "RCA Analysis Complete — Please Review")
+        subject = arguments.get("subject") or "RCA Analysis Complete — Please Review"
         session_summary = arguments["session_summary"]
-        entries = rca_report_tool.pending_reports(reports_dir, arguments.get("incident_numbers"))
+        raw_numbers = arguments.get("incident_numbers")
+        if isinstance(raw_numbers, str):
+            raw_numbers = re.split(r"[,\s]+", raw_numbers)
+        if isinstance(raw_numbers, (list, tuple, set)):
+            numbers = [str(n).strip() for n in raw_numbers if n is not None and str(n).strip()]
+        else:
+            numbers = []
+        entries = rca_report_tool.pending_reports(reports_dir, numbers or None)
 
         result = _send(
             smtp_host=smtp.host,
@@ -849,8 +857,19 @@ async def _dispatch(name: str, arguments: dict, reports_dir: str) -> str:
             report_entries=entries,
             verify_ssl=smtp.verify_ssl,
         )
-        if str(result).startswith("✓") and entries:
-            rca_report_tool.mark_emailed(reports_dir, [e["path"] for e in entries])
+        result = str(result)
+        if result.startswith("✓"):
+            if entries:
+                try:
+                    rca_report_tool.mark_emailed(reports_dir, [e["path"] for e in entries])
+                except Exception as exc:
+                    logger.warning(f"[MCP] mark_emailed failed after successful send: {exc}")
+                    result += (
+                        f"\n⚠ Email sent, but reports could not be marked as emailed "
+                        f"({type(exc).__name__}: {exc}) — they may be attached again next time."
+                    )
+            attached = ", ".join(str(e.get("incident_number")) for e in entries if e.get("incident_number"))
+            result += f"\nAttached incidents: {attached or 'none'}"
         return result
 
     else:

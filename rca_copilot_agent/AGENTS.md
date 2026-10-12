@@ -170,6 +170,8 @@ Always add a `LIMIT` clause. Use backtick table refs with the **full project.dat
 
 **Evidence recording:** during an RCA ALWAYS pass `incident_number` to `query_bigquery`. The query (SQL, rationale, row count or error — never result rows) is recorded and appended to the saved report as "## Evidence — BigQuery queries run". There is no cost guard (by decision); the blocklist and the 100-row cap still apply.
 
+**Privacy:** evidence logs under `<REPORTS_DIR>/rca_reports/.evidence/` store the SQL text (which can contain identifiers such as emails, phones or order IDs from tickets) but never result rows; the reports dir is gitignored — never commit it.
+
 ### Phase 3b — B2B Customer "Cannot Search / Cannot Create" Checklist
 
 When an incident is about a store BA unable to find or create a B2B customer, run ALL of these checks in order:
@@ -232,9 +234,9 @@ Interpret results:
    It validates the report: missing/empty sections return `✗ RCA report NOT saved ...` — fix and call again.
    Warnings (shortform group names, placeholders, no `→ Checked` lines) are returned but do not block.
    The saved report gets a ticket metadata header (from the local incident cache) and the BigQuery evidence appendix
-   automatically — never write those yourself. Every saved report is registered on disk for the email.
+   automatically — never write those yourself. `save_rca_report` accepts common heading variants, but still use the exact `###` headings from `get_rca_template`. Evidence for a report covers queries recorded since the incident's last emailed report, within `RCA_SESSION_WINDOW_HOURS` (default 24); re-saving before emailing keeps it. Every saved report is registered on disk for the email.
 3. Call `send_rca_email` **once**, after ALL reports are saved (works across separate CLI calls).
-   It attaches every saved, not-yet-emailed report (only the latest per incident); optional `incident_numbers` filters.
+   It attaches saved, not-yet-emailed reports (only the latest per incident). Pass `incident_numbers` = the incidents investigated in this session (args file `{"session_summary": "...", "subject": "...", "incident_numbers": ["INC1","INC2"]}`); without it, all saved-but-unsent reports from the last `RCA_SESSION_WINDOW_HOURS` hours (default 24) are attached. The result ends with `Attached incidents: ...` — check it matches what you investigated.
    The email contains a summary table, each RCA inline and the `.md` attachments.
    - `session_summary`: plain-text list of incidents investigated and key finding per incident.
    - `subject`: short subject line, e.g. "RCA Complete — INC10403788, INC10412275".

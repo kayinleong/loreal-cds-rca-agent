@@ -132,6 +132,20 @@ class EmailToolTests(unittest.TestCase):
         _, smtp, _ = _send(None, smtp_user="", smtp_password="")
         smtp.return_value.__enter__.return_value.login.assert_not_called()
 
+    def test_subject_crlf_sanitised(self):
+        result, smtp, _ = _send([], subject="Bad\r\nBcc: x@evil.test\n\nEnd")
+        self.assertTrue(result.startswith("✓"))
+        msg = email.message_from_bytes(_sent_bytes(smtp), policy=policy.default)
+        self.assertEqual(msg["Subject"], "Bad Bcc: x@evil.test End")
+        self.assertIsNone(msg["Bcc"])
+
+    def test_empty_subject_defaults(self):
+        for subj in ("\r\n", "   ", None):
+            result, smtp, _ = _send([], subject=subj)
+            self.assertTrue(result.startswith("✓"))
+            msg = email.message_from_bytes(_sent_bytes(smtp), policy=policy.default)
+            self.assertEqual(msg["Subject"], email_tool.DEFAULT_SUBJECT)
+
     def test_smtp_failure(self):
         with mock.patch("smtplib.SMTP", side_effect=ConnectionRefusedError("boom")):
             res = email_tool.send_rca_email(subject="s", session_summary="x", **SMTP_ARGS)
