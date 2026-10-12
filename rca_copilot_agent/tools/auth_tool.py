@@ -1,7 +1,7 @@
 """
 auth_tool.py — Automatic ServiceNow credential refresh.
 ========================================================
-Detects missing or expired COOKIE / X_USERTOKEN at MCP server startup.
+Detects missing or expired COOKIE / X_USERTOKEN at tool startup.
 If credentials are stale, opens a headed Chromium browser window for SSO login,
 extracts cookies and window.g_ck, and writes them back to .env.
 
@@ -170,7 +170,7 @@ def ensure_credentials(
     instance_url: str = "https://loreal.service-now.com",
 ) -> None:
     """
-    Top-level entry point called from mcp_server.main() before asyncio.run().
+    Top-level entry point called from run_tool.py before dispatch.
 
     Checks whether the current COOKIE and X_USERTOKEN in .env are valid.
     If missing or stale, launches a browser for SSO login and writes the new

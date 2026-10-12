@@ -354,5 +354,45 @@ class QueryApiTests(unittest.TestCase):
                 bq.query_bigquery_result("SELECT 1")
 
 
+class EnsureGcloudAuthNoAdcTests(unittest.TestCase):
+    """ensure_gcloud_auth must never touch Application Default Credentials."""
+
+    def _run(self, account, token_rc, login_ok=True):
+        calls = []
+
+        def fake_run(*args, timeout=15):
+            calls.append(args)
+            if args[:2] == ("auth", "list"):
+                return _cp(stdout=(account or "") + "\n")
+            if args[:2] == ("auth", "print-access-token"):
+                return _cp(rc=token_rc)
+            return _cp()
+
+        def fake_interactive(*args, timeout=600):
+            calls.append(args)
+            return login_ok
+
+        with mock.patch.object(gc, "_run_gcloud", side_effect=fake_run), \
+                mock.patch.object(gc, "_interactive_gcloud", side_effect=fake_interactive), \
+                mock.patch.object(gc.subprocess, "run", side_effect=AssertionError("direct subprocess")):
+            gc.ensure_gcloud_auth()
+        return calls
+
+    def test_valid_user_creds_no_adc(self):
+        calls = self._run("me@loreal.com", 0)
+        self.assertFalse(any("application-default" in c for c in calls))
+        self.assertNotIn(("auth", "login"), calls)
+
+    def test_login_flow_still_runs_without_adc(self):
+        calls = self._run("me@gmail.com", 1)
+        self.assertIn(("auth", "login"), calls)
+        self.assertTrue(any(c[:3] == ("config", "set", "project") for c in calls))
+        self.assertFalse(any("application-default" in c for c in calls))
+
+    def test_adc_helpers_removed(self):
+        for name in ("is_adc_configured", "run_adc_login", "set_quota_project"):
+            self.assertFalse(hasattr(gc, name), name)
+
+
 if __name__ == "__main__":
     unittest.main()

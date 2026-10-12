@@ -11,8 +11,8 @@ Optional:
     REPORTS_DIR     Local directory for downloaded incident JSON (default: ./my_reports)
     ATTACHMENTS_DIR Local directory for downloaded attachments (default: ./attachments)
 
-BigQuery: configured via schema.json in the repo root + gcloud ADC.
-No BQ_* env vars required. Run: gcloud auth application-default login
+BigQuery: configured via schema.json in the repo root + gcloud user login.
+No BQ_* env vars required. Queries run via the bq CLI (run: gcloud auth login).
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Offline tests for the RCA flow wiring in mcp_server._dispatch."""
+"""Offline tests for the RCA flow wiring in dispatcher._dispatch."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import mcp_server  # noqa: E402
+import dispatcher  # noqa: E402
 from tools import rca_report_tool  # noqa: E402
 from tools.bigquery_tool import QueryResult  # noqa: E402
 
@@ -41,7 +41,7 @@ Something broke.
 
 
 def run(name, args, reports_dir):
-    return asyncio.run(mcp_server._dispatch(name, args, reports_dir))
+    return asyncio.run(dispatcher._dispatch(name, args, reports_dir))
 
 
 class _Base(unittest.TestCase):
@@ -132,7 +132,7 @@ class TemplateAndSaveTests(_Base):
         self.assertNotIn("http://x", text)
 
     def test_display_value_helper(self):
-        f = mcp_server._display_value
+        f = dispatcher._display_value
         self.assertEqual(f(None), "")
         self.assertEqual(f("x"), "x")
         self.assertEqual(f({"display_value": "D", "value": "V"}), "D")
@@ -214,7 +214,7 @@ class SendEmailTests(_Base):
 
 class PostCommentTests(_Base):
     def test_unconfirmed_preview_no_reader(self):
-        with mock.patch.object(mcp_server, "_build_reader", side_effect=AssertionError("reader built")):
+        with mock.patch.object(dispatcher, "_build_reader", side_effect=AssertionError("reader built")):
             out = run("post_comment", {"incident_number": "INC1", "text": "hello there", "as_work_note": True}, self.dir)
         self.assertTrue(out.startswith("⚠ NOT POSTED — preview only."))
         self.assertIn("INC1", out)
@@ -224,7 +224,7 @@ class PostCommentTests(_Base):
         self.assertIn("confirmed=true", out)
 
     def test_confirmed_false_string_is_unconfirmed(self):
-        with mock.patch.object(mcp_server, "_build_reader", side_effect=AssertionError("reader built")):
+        with mock.patch.object(dispatcher, "_build_reader", side_effect=AssertionError("reader built")):
             out = run("post_comment", {"incident_number": "INC1", "text": "t", "confirmed": "false"}, self.dir)
         self.assertTrue(out.startswith("⚠ NOT POSTED"))
 
@@ -233,8 +233,8 @@ class PostCommentTests(_Base):
             for number, table in (("INC1", "incident"), ("RITM2", "sc_req_item"), ("TASK3", "sc_task")):
                 reader = mock.Mock()
                 reader.post_comment.return_value = True
-                with mock.patch.object(mcp_server, "_build_reader", return_value=(reader, None)), \
-                        mock.patch.object(mcp_server, "_resolve_sys_id", return_value="sid"):
+                with mock.patch.object(dispatcher, "_build_reader", return_value=(reader, None)), \
+                        mock.patch.object(dispatcher, "_resolve_sys_id", return_value="sid"):
                     out = run("post_comment", {"incident_number": number, "text": "t", "confirmed": confirmed}, self.dir)
                 self.assertTrue(out.startswith("✓ Posted comment"), out)
                 reader.post_comment.assert_called_once_with(
@@ -244,11 +244,11 @@ class PostCommentTests(_Base):
 
 class ToolNamesTests(unittest.TestCase):
     def test_matches_dispatch_branches(self):
-        src = inspect.getsource(mcp_server._dispatch)
+        src = inspect.getsource(dispatcher._dispatch)
         branches = set(re.findall(r'(?:if|elif) name == "([a-z_]+)"', src))
-        self.assertEqual(set(mcp_server.TOOL_NAMES), branches)
-        self.assertEqual(len(mcp_server.TOOL_NAMES), 15)
-        self.assertEqual(len(set(mcp_server.TOOL_NAMES)), 15)
+        self.assertEqual(set(dispatcher.TOOL_NAMES), branches)
+        self.assertEqual(len(dispatcher.TOOL_NAMES), 15)
+        self.assertEqual(len(set(dispatcher.TOOL_NAMES)), 15)
 
 
 if __name__ == "__main__":
