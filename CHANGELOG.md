@@ -26,3 +26,28 @@
   (`bq.cmd` / `gcloud.cmd`), `os.pathsep`, UTF-8 I/O, process-tree kill on timeout.
 - RCA email: HTML-escaped, summary table, each RCA inline, `.md` attachments.
 - `--json '<JSON>'` still works but is POSIX-shell-only; docs now use `--arg` / `--json-file`.
+
+## quick-kayinleong-028 — 2026-10-12 — easy install
+
+### Breaking
+- **`rca_agent/` removed** (standalone ReAct agent and its MCP server).
+  Migration: use `rca_copilot_agent/` via `run_tool.py`.
+- **`rca_copilot_agent` MCP server and `.vscode/mcp.json` removed.** The package is CLI-only.
+  Migration: call tools with `python3 rca_copilot_agent/run_tool.py <tool> --json-file <path>`
+  (tool dispatch now lives in `rca_copilot_agent/dispatcher.py`).
+- **`requirements.txt` restructured**: the pip-freeze file is replaced by per-agent direct-dependency files
+  (root file `-r`-includes them; `requirements-mcp.txt` is opt-in).
+  Migration: re-run `./setup.sh` / `setup.cmd`.
+- **ADC login no longer performed** by `ensure_gcloud_auth`; BigQuery uses `gcloud auth login` user credentials.
+
+### Added
+- `setup.sh` / `setup.cmd` -> `scripts/bootstrap.py` (creates `.venv`, installs per agent; `--proxy`,
+  `--index-url`, `--wheelhouse`, `--skip-retrieval`, `--with-mcp`, `--recreate`).
+- `scripts/doctor.py` offline environment check.
+- VS Code tasks "RCA: Setup (all agents)" and "RCA: Doctor".
+- Auto-venv: each `run_tool.py` re-execs inside `<repo>/.venv`; clear hint when a package is missing.
+- `scripts/tests/` (requirements coverage, bootstrap/doctor), `README.md`.
+
+### Changed
+- `CLAUDE.md` rewritten for the three-agent layout, `bq` CLI auth and the no-cost-guard decision.
+- `run_tool.py` rejects unknown tool names early.
