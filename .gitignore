@@ -204,3 +204,6 @@ my_reports/
 attachments/
 rca_reports/
 mockdata/
+
+# RCA scratch args files (ticket text / PII) - never commit
+.rca_tmp/
