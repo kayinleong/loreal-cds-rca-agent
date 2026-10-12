@@ -4,7 +4,8 @@ gcloud_tool.py — Automatic gcloud authentication check.
 Handles two separate credential stores that gcloud maintains:
 
   1. User credentials  (`gcloud auth login`)
-     Used by: bq CLI — query_bigquery in bigquery_tool.py calls bq directly.
+     Used by: bq CLI — query_bigquery in bigquery_tool.py calls bq directly
+              (macOS and Windows).
      Check:   `gcloud auth print-access-token`
      Fix:     `gcloud auth login` → set account → set project
 
@@ -40,20 +41,39 @@ _GCLOUD_FALLBACK_PATHS = [
 ]
 
 
+def _windows_gcloud_candidates() -> list:
+    """Windows Cloud SDK locations built from env vars at call time (unset ones skipped)."""
+    out = []
+    for var in ("LOCALAPPDATA", "ProgramFiles(x86)", "ProgramFiles"):
+        base = os.environ.get(var)
+        if base:
+            out.append(os.path.join(base, "Google", "Cloud SDK", "google-cloud-sdk", "bin", "gcloud.cmd"))
+    return out
+
+
+def _is_usable(path: str) -> bool:
+    if not os.path.isfile(path):
+        return False
+    return True if os.name == "nt" else os.access(path, os.X_OK)
+
+
 def _find_gcloud() -> str:
     """
     Return the gcloud binary path.
 
-    VS Code and other GUI launchers strip shell PATH customisations, so
-    shutil.which("gcloud") often fails even when gcloud is installed. We
-    supplement it with a list of well-known SDK locations so the MCP server
-    works regardless of how it was launched.
+    Order: GCLOUD_BIN override, shutil.which (PATHEXT-aware on Windows), then
+    well-known SDK locations (VS Code and other GUI launchers strip shell PATH
+    customisations, so PATH lookup alone often fails).
     """
+    override = os.environ.get("GCLOUD_BIN")
+    if override and _is_usable(override):
+        return override
     path = shutil.which("gcloud")
     if path:
         return path
-    for candidate in _GCLOUD_FALLBACK_PATHS:
-        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+    candidates = _windows_gcloud_candidates() if os.name == "nt" else _GCLOUD_FALLBACK_PATHS
+    for candidate in candidates:
+        if _is_usable(candidate):
             return candidate
     return "gcloud"  # let subprocess raise FileNotFoundError with a clear message
 
@@ -63,7 +83,8 @@ def _run_gcloud(*args: str, timeout: int = 15) -> subprocess.CompletedProcess:
     return subprocess.run(
         [_find_gcloud(), *args],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=timeout,
     )
 
