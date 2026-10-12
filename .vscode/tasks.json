@@ -1,0 +1,21 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "RCA: Setup (all agents)",
+      "type": "shell",
+      "command": "./setup.sh",
+      "windows": { "command": "setup.cmd" },
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "problemMatcher": []
+    },
+    {
+      "label": "RCA: Doctor",
+      "type": "shell",
+      "command": "python3 scripts/doctor.py",
+      "windows": { "command": "py -3 scripts\\doctor.py" },
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "problemMatcher": []
+    }
+  ]
+}

@@ -185,8 +185,7 @@ Thumbs.db
 *~
 .idea/
 .vscode/*
-!.vscode/mcp.json
-!.vscode/settings.json
+!.vscode/tasks.json
 *.code-workspace
 .env.*
 !.env.example
