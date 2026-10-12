@@ -594,7 +594,7 @@ def _kill_process_tree(proc) -> None:
 def _bq_cli_execute(sql: str, project: str, max_rows: int = 100) -> QueryResult:
     """
     Execute a pre-validated SELECT query via the bq CLI subprocess.
-    Uses gcloud auth login credentials, which not Application Default Credentials.
+    Uses gcloud auth login credentials, not Application Default Credentials (ADC).
     SQL is sent on stdin (bq reads it when no positional query is given), so it
     is immune to Windows command-line quoting/length problems.
     """

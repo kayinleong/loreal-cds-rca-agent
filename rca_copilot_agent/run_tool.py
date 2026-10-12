@@ -145,7 +145,20 @@ def _reexec_in_repo_venv(repo_root=None, prefix=None, environ=None, argv=None,
     argv = sys.argv[1:] if argv is None else argv
     env = dict(environ)
     env[REEXEC_ENV] = "1"
-    rc = subprocess.call([str(venv_py), script, *argv], env=env)
+    try:
+        rc = subprocess.call([str(venv_py), script, *argv], env=env)
+    except KeyboardInterrupt:
+        # The child (e.g. interactive `gcloud auth login`) got the signal too.
+        sys.exit(130)
+    except OSError as e:
+        print(
+            f"`.venv` exists but its Python can't start ({type(e).__name__}: {e}). "
+            "Re-run ./setup.sh --recreate (macOS/Linux) or setup.cmd --recreate (Windows).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if rc < 0:  # child killed by signal N -> shell convention 128 + N
+        rc = 128 - rc
     sys.exit(rc)
 
 
