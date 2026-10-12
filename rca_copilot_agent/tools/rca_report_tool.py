@@ -20,8 +20,11 @@ import logging
 import os
 import re
 import tempfile
-from datetime import datetime
+import time
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +77,8 @@ _L3_GROUPS: tuple[str, ...] = (
 # Bare single words (LOY, MARS, HIP, CRM, Ops...) double as legitimate system names in
 # prose, so only multi-word shortforms and these distinctive tokens are flagged.
 _DISTINCTIVE_SINGLE = {"iBeauty", "SFCC"}
+# Multi-word forms that fire on ordinary prose; kept in the mapping table, never warned on.
+_NO_WARN_FORMS = {"MARS Ops", "Azure team"}
 
 
 def _canonical_groups() -> list[str]:
@@ -85,7 +90,7 @@ def _shortforms() -> list[str]:
     out: list[str] = []
     for forms, _, _ in _GROUP_MAP:
         for f in forms:
-            if " " not in f and f not in _DISTINCTIVE_SINGLE:
+            if f in _NO_WARN_FORMS or (" " not in f and f not in _DISTINCTIVE_SINGLE):
                 continue
             out.append(f)
     return sorted(set(out), key=len, reverse=True)
@@ -165,26 +170,51 @@ If the right canonical group is uncertain, pick the closest match and add `[USER
 # Parsing & validation
 # ---------------------------------------------------------------------------
 
+_SEP = r"(?:\s*[/&]\s*|\s+AND\s+)"
 _SECTION_PATTERNS: dict[str, str] = {
     "WHAT HAPPENED": r"WHAT\s+HAPPENED",
     "WHAT WE CHECKED": r"WHAT\s+WE\s+CHECKED",
     "WHAT WE FOUND": r"WHAT\s+WE\s+FOUND",
-    "WHAT WE NEED / DID": r"WHAT\s+WE\s+NEED(?:\s*/\s*(?:WHAT\s+WE\s+)?DID)?",
+    "WHAT WE NEED / DID": (
+        r"(?:NEXT\s+STEPS" + _SEP + r")?WHAT\s+WE\s+NEED"
+        r"(?:" + _SEP + r"(?:WHAT\s+WE\s+)?DID|\s+TO\s+DO)?"
+        r"|WHAT\s+WE\s+DID" + _SEP + r"(?:WHAT\s+WE\s+)?NEED"
+    ),
 }
+# Prefix: up to 3 spaces, markdown/bold/emoji junk, optional numbering ("1.", "1)", "Step 1:"), junk.
+_HEADING_PREFIX = (
+    r"^ {0,3}(?=\S)(?P<pre>(?:[^\w\s][ \t]*)*(?:(?:Step[ \t]+)?\d+[.):]?[ \t]*)?(?:[^\w\s][ \t]*)*)"
+)
 _HEADING_RES: dict[str, re.Pattern[str]] = {
     name: re.compile(
-        r"^[ \t]{0,3}#{1,4}[ \t]*\**[ \t]*" + pat + r"[ \t]*:?[ \t]*\**[ \t]*:?[ \t]*$",
-        re.IGNORECASE,
+        _HEADING_PREFIX + r"(?:" + pat + r")(?!\w)(?P<rest>.*)$", re.IGNORECASE
     )
     for name, pat in _SECTION_PATTERNS.items()
 }
+_PLAIN_REST_RE = re.compile(r"[ \t]*[*_]*[ \t]*:?[ \t]*[*_]*[ \t]*")
+_BOLD_END_RE = re.compile(r"(?:[*_]{2}[ \t]*:?|:[ \t]*[*_]{2})[ \t]*$")
 _PLACEHOLDER_RE = re.compile(r"\{[A-Za-z_][A-Za-z0-9_ ]*\}")
 
 
 def _heading_name(line: str) -> str | None:
+    line = line.rstrip()
+    if len(line) > 300:  # headings are short; also bounds regex work
+        return None
     for name, rx in _HEADING_RES.items():
-        if rx.match(line):
-            return name
+        m = rx.match(line)
+        if not m:
+            continue
+        pre, rest = m.group("pre"), m.group("rest")
+        if "#" in pre:
+            if re.search(r"#{7,}", pre):
+                continue
+            return name  # '#' heading: trailing descriptive text allowed
+        if "**" in pre or "__" in pre:
+            if _BOLD_END_RE.search(line):
+                return name  # bold-only heading line
+            continue
+        if _PLAIN_REST_RE.fullmatch(rest):
+            return name  # plain line that is only the section name
     return None
 
 
@@ -249,6 +279,11 @@ def validate_rca_report(report_text: str) -> tuple[list[str], list[str]]:
 # ---------------------------------------------------------------------------
 
 
+def _clean_inc(incident_number: str) -> str:
+    """Collapse all whitespace (incl. newlines) so an ID can never add a heading line."""
+    return re.sub(r"\s+", " ", str(incident_number or "")).strip()
+
+
 def _safe_inc(incident_number: str) -> str:
     safe = re.sub(r"[^A-Za-z0-9_-]", "_", str(incident_number or "").strip())
     return safe or "UNKNOWN"
@@ -282,6 +317,101 @@ def _atomic_write(path: Path, text: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Time helpers, session window and registry lock
+# ---------------------------------------------------------------------------
+
+_DEFAULT_WINDOW_HOURS = 24.0
+
+
+def _now() -> datetime:
+    """Timezone-aware 'now' (local offset); every stored timestamp uses this form."""
+    return datetime.now().astimezone()
+
+
+def _stamp(dt: datetime | None = None) -> str:
+    return (dt or _now()).isoformat(timespec="seconds")
+
+
+def _parse_ts(value: object) -> datetime | None:
+    """Parse an ISO timestamp to an aware datetime (naive values assumed local)."""
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        try:
+            dt = dt.astimezone()
+        except (OverflowError, OSError, ValueError):
+            dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _session_window_hours() -> float:
+    """RCA_SESSION_WINDOW_HOURS (default 24; invalid or <= 0 -> 24)."""
+    raw = os.environ.get("RCA_SESSION_WINDOW_HOURS", "")
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        return _DEFAULT_WINDOW_HOURS
+    if val != val or val <= 0 or val == float("inf"):
+        return _DEFAULT_WINDOW_HOURS
+    return val
+
+
+_LOCK_TIMEOUT_S = 10.0
+_LOCK_POLL_S = 0.05
+_LOCK_STALE_S = 30.0
+
+
+def _lock_path(reports_dir: str) -> Path:
+    return _rca_dir(reports_dir) / ".registry.lock"
+
+
+@contextmanager
+def _registry_lock(reports_dir: str) -> Iterator[bool]:
+    """Cross-process lock around registry read-modify-write (O_CREAT|O_EXCL file).
+
+    Stale locks (mtime older than 30 s) are removed. If the lock cannot be acquired
+    within the timeout a warning is logged and the caller proceeds (never deadlocks).
+    Yields True when the lock is held.
+    """
+    path = _lock_path(reports_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + _LOCK_TIMEOUT_S
+    held = False
+    while True:
+        try:
+            fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
+            held = True
+            break
+        except FileExistsError:
+            try:
+                if time.time() - path.stat().st_mtime > _LOCK_STALE_S:
+                    os.unlink(path)
+                    continue
+            except OSError:
+                continue  # vanished between exists/stat: retry immediately
+        except OSError as exc:
+            logger.warning("Registry lock unavailable (%s); proceeding without it", exc)
+            break
+        if time.monotonic() >= deadline:
+            logger.warning("Timed out acquiring registry lock %s; proceeding without it", path)
+            break
+        time.sleep(_LOCK_POLL_S)
+    try:
+        yield held
+    finally:
+        if held:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+
+# ---------------------------------------------------------------------------
 # Evidence log
 # ---------------------------------------------------------------------------
 
@@ -298,7 +428,7 @@ def record_query(
 ) -> None:
     """Append one JSON line describing a BigQuery query (never result rows)."""
     entry = {
-        "ts": datetime.now().isoformat(timespec="seconds"),
+        "ts": _stamp(),
         "sql": sql,
         "rationale": rationale,
         "success": bool(success),
@@ -311,8 +441,15 @@ def record_query(
         fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
-def load_evidence(reports_dir: str, incident_number: str) -> list[dict]:
-    """Return recorded query entries for an incident (corrupt lines skipped)."""
+def load_evidence(
+    reports_dir: str, incident_number: str, since: datetime | None = None
+) -> list[dict]:
+    """Return recorded query entries for an incident (corrupt lines skipped).
+
+    With ``since``, only entries whose ``ts`` is >= that instant are returned
+    (entries with an unparseable ``ts`` are kept). Naive ``since`` is treated as local.
+    """
+    since_dt = _parse_ts(since.isoformat()) if since is not None else None
     path = _evidence_path(reports_dir, incident_number)
     if not path.is_file():
         return []
@@ -328,8 +465,13 @@ def load_evidence(reports_dir: str, incident_number: str) -> list[dict]:
                 except ValueError:
                     logger.warning("Skipping corrupt evidence line in %s", path)
                     continue
-                if isinstance(obj, dict):
-                    out.append(obj)
+                if not isinstance(obj, dict):
+                    continue
+                if since_dt is not None:
+                    ts = _parse_ts(obj.get("ts"))
+                    if ts is not None and ts < since_dt:
+                        continue
+                out.append(obj)
     except OSError as exc:
         logger.warning("Could not read evidence log %s: %s", path, exc)
     return out
@@ -347,7 +489,7 @@ def render_report(
     evidence: list[dict],
 ) -> str:
     """Compose the final Markdown: title, metadata, body, evidence list."""
-    lines = [f"# RCA Report — {incident_number}", ""]
+    lines = [f"# RCA Report — {_clean_inc(incident_number)}", ""]
     meta = incident_meta or {}
     rows = [(k, meta[k]) for k in _META_KEYS if meta.get(k)]
     if rows:
@@ -411,56 +553,70 @@ def save_report(
             "RCA report failed validation:\n- " + "\n- ".join(errors)
             + "\n\nCall get_rca_template and follow it exactly."
         )
-    evidence = load_evidence(reports_dir, incident_number)
-    content = render_report(incident_number, report_text, incident_meta, evidence)
+    incident_number = _clean_inc(incident_number)
+    meta = incident_meta or {}
+    inc_key = incident_number.lower()
     sections = parse_sections(report_text)
 
-    now = datetime.now()
-    out_dir = _rca_dir(reports_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    stem = f"{_safe_inc(incident_number)}_rca_{now.strftime('%Y%m%d_%H%M%S')}"
-    path = out_dir / f"{stem}.md"
-    n = 2
-    while path.exists() or path.with_suffix(".json").exists():
-        path = out_dir / f"{stem}_{n}.md"
-        n += 1
-    json_path = path.with_suffix(".json")
+    with _registry_lock(reports_dir):
+        registry = _load_registry(reports_dir)
+        # Evidence window: after the last emailed report for this incident, and never older
+        # than the session window, so a later RCA does not inherit earlier queries.
+        now = _now()
+        since = now - timedelta(hours=_session_window_hours())
+        for entry in registry:
+            if str(entry.get("incident_number", "")).strip().lower() != inc_key:
+                continue
+            if not entry.get("emailed_at"):
+                continue
+            saved = _parse_ts(entry.get("saved_at"))
+            if saved is not None and saved > since:
+                since = saved
+        evidence = load_evidence(reports_dir, incident_number, since=since)
+        content = render_report(incident_number, report_text, incident_meta, evidence)
 
-    _atomic_write(path, content)
-    sidecar = {
-        "incident_number": incident_number,
-        "generated_at": now.isoformat(timespec="seconds"),
-        "sections": sections,
-        "warnings": warnings,
-        "evidence": evidence,
-    }
-    _atomic_write(json_path, json.dumps(sidecar, ensure_ascii=False, indent=2))
+        out_dir = _rca_dir(reports_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stem = f"{_safe_inc(incident_number)}_rca_{now.strftime('%Y%m%d_%H%M%S')}"
+        path = out_dir / f"{stem}.md"
+        n = 2
+        while path.exists() or path.with_suffix(".json").exists():
+            path = out_dir / f"{stem}_{n}.md"
+            n += 1
+        json_path = path.with_suffix(".json")
 
-    meta = incident_meta or {}
-    registry = _load_registry(reports_dir)
-    inc_key = str(incident_number).strip().lower()
-    for entry in registry:
-        if (
-            str(entry.get("incident_number", "")).strip().lower() == inc_key
-            and not entry.get("emailed_at")
-        ):
-            entry["superseded"] = True
-    registry.append(
-        {
+        _atomic_write(path, content)
+        sidecar = {
             "incident_number": incident_number,
-            "path": str(path),
-            "saved_at": now.isoformat(timespec="seconds"),
-            "short_description": meta.get("short_description", "") or "",
-            "root_cause": _first_line(sections.get("WHAT WE FOUND", "")),
-            "emailed_at": None,
-            "superseded": False,
+            "generated_at": _stamp(now),
+            "sections": sections,
+            "warnings": warnings,
+            "evidence": evidence,
         }
-    )
-    _save_registry(reports_dir, registry)
+        _atomic_write(json_path, json.dumps(sidecar, ensure_ascii=False, indent=2))
+
+        for entry in registry:
+            if (
+                str(entry.get("incident_number", "")).strip().lower() == inc_key
+                and not entry.get("emailed_at")
+            ):
+                entry["superseded"] = True
+        registry.append(
+            {
+                "incident_number": incident_number,
+                "path": os.path.abspath(str(path)),
+                "saved_at": _stamp(now),
+                "short_description": meta.get("short_description", "") or "",
+                "root_cause": _first_line(sections.get("WHAT WE FOUND", "")),
+                "emailed_at": None,
+                "superseded": False,
+            }
+        )
+        _save_registry(reports_dir, registry)
 
     return {
-        "path": str(path),
-        "json_path": str(json_path),
+        "path": os.path.abspath(str(path)),
+        "json_path": os.path.abspath(str(json_path)),
         "warnings": warnings,
         "evidence_count": len(evidence),
     }
@@ -490,9 +646,31 @@ def _save_registry(reports_dir: str, registry: list[dict]) -> None:
     _atomic_write(_registry_path(reports_dir), json.dumps(registry, ensure_ascii=False, indent=2))
 
 
-def pending_reports(reports_dir: str, incident_numbers: list[str] | None = None) -> list[dict]:
-    """Registry entries not yet emailed, not superseded, whose file still exists."""
-    wanted = {str(n).strip().lower() for n in incident_numbers} if incident_numbers else None
+def _normalize_incident_filter(incident_numbers: object) -> set[str] | None:
+    """str (comma/whitespace separated), list/tuple of str, or None -> lowercase set."""
+    if incident_numbers is None:
+        return None
+    if isinstance(incident_numbers, str):
+        items: list[str] = re.split(r"[,\s]+", incident_numbers)
+    else:
+        try:
+            items = [str(n) for n in incident_numbers]  # type: ignore[union-attr]
+        except TypeError:
+            items = [str(incident_numbers)]
+    wanted = {i.strip().lower() for i in items if i and i.strip()}
+    return wanted or None
+
+
+def pending_reports(
+    reports_dir: str, incident_numbers: str | list[str] | tuple[str, ...] | None = None
+) -> list[dict]:
+    """Registry entries not yet emailed, not superseded, whose file still exists.
+
+    With an incident filter there is no age limit; without one, only entries saved within
+    the last ``RCA_SESSION_WINDOW_HOURS`` hours are returned.
+    """
+    wanted = _normalize_incident_filter(incident_numbers)
+    cutoff = _now() - timedelta(hours=_session_window_hours()) if wanted is None else None
     out: list[dict] = []
     for e in _load_registry(reports_dir):
         if e.get("emailed_at") or e.get("superseded"):
@@ -502,6 +680,10 @@ def pending_reports(reports_dir: str, incident_numbers: list[str] | None = None)
             continue
         if wanted is not None and str(e.get("incident_number", "")).strip().lower() not in wanted:
             continue
+        if cutoff is not None:
+            saved = _parse_ts(e.get("saved_at"))
+            if saved is None or saved < cutoff:
+                continue
         out.append(
             {
                 "incident_number": e.get("incident_number", ""),
@@ -517,13 +699,14 @@ def pending_reports(reports_dir: str, incident_numbers: list[str] | None = None)
 def mark_emailed(reports_dir: str, paths: list[str]) -> None:
     """Record that the reports at ``paths`` were emailed."""
     targets = {os.path.normcase(os.path.abspath(str(p))) for p in paths}
-    registry = _load_registry(reports_dir)
-    stamp = datetime.now().isoformat(timespec="seconds")
-    changed = False
-    for e in registry:
-        p = e.get("path")
-        if p and os.path.normcase(os.path.abspath(str(p))) in targets and not e.get("emailed_at"):
-            e["emailed_at"] = stamp
-            changed = True
-    if changed:
-        _save_registry(reports_dir, registry)
+    with _registry_lock(reports_dir):
+        registry = _load_registry(reports_dir)
+        stamp = _stamp()
+        changed = False
+        for e in registry:
+            p = e.get("path")
+            if p and os.path.normcase(os.path.abspath(str(p))) in targets and not e.get("emailed_at"):
+                e["emailed_at"] = stamp
+                changed = True
+        if changed:
+            _save_registry(reports_dir, registry)
