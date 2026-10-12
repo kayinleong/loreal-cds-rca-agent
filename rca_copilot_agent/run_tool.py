@@ -49,12 +49,13 @@ Tool names:
     search_incidents      Keyword-search across all local incidents
     extract_identifiers   Extract order IDs / emails / EAN codes from an incident
     download_attachments  Download attachment files for an incident
-    post_comment          Post a comment or work note to SNOW (confirm before calling)
+    post_comment          Preview a comment/work note; posts only with confirmed=true (after user approval)
     list_bq_tables        List all BQ tables with RCA purpose
     get_schema            Get BQ table schema (from local schema.json)
-    query_bigquery        Run a read-only SELECT query against SPACE CDS BigQuery
-    save_rca_report       Save a completed RCA report to disk
-    send_rca_email        Send HTML email notification with attached reports
+    query_bigquery        Run a read-only SELECT query (pass incident_number to log evidence)
+    get_rca_template      Print the canonical RCA report template (call before writing an RCA)
+    save_rca_report       Validate + save a completed RCA report to disk
+    send_rca_email        Email all saved, not-yet-emailed reports
 """
 
 from __future__ import annotations

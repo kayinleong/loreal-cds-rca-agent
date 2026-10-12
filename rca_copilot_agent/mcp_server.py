@@ -11,13 +11,19 @@ ServiceNow tools:
   get_incident_summary — Get full formatted text of a loaded incident
   list_incidents       — List all locally stored incidents
   search_incidents     — Search incident text for a keyword
-  post_comment         — Post a comment (or work note) to an incident
+  post_comment         — Post a comment (or work note); preview-only until confirmed=true
   extract_identifiers  — Extract order IDs, emails, EAN codes from incident text
 
 BigQuery tools (via gcloud ADC + schema.json — no env vars required):
-  query_bigquery       — Execute a read-only SELECT query
+  query_bigquery       — Execute a read-only SELECT query (pass incident_number to log evidence)
   get_schema           — Get table schema from schema.json (instant, no BQ cost)
   list_bq_tables       — List all tables with their RCA purpose from schema.json
+
+RCA report tools:
+  get_rca_template     — Canonical RCA format; call before writing the first report
+  save_rca_report      — Validate + save an RCA report (appends recorded BQ evidence)
+  send_rca_email       — Email all saved, not-yet-emailed reports
+  analyze_incident / download_attachments — one-stop analysis / attachment download
 
 USAGE:
     python mcp_server.py
@@ -47,6 +53,25 @@ import sys
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Every tool handled by _dispatch (used by the JSON-RPC fallback tools/list).
+TOOL_NAMES: tuple[str, ...] = (
+    "fetch_incidents",
+    "get_incident",
+    "get_incident_summary",
+    "list_incidents",
+    "analyze_incident",
+    "search_incidents",
+    "post_comment",
+    "extract_identifiers",
+    "query_bigquery",
+    "get_schema",
+    "list_bq_tables",
+    "download_attachments",
+    "get_rca_template",
+    "save_rca_report",
+    "send_rca_email",
+)
 
 # Allow running as `python rca_copilot_agent/mcp_server.py` from repo root
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -242,7 +267,9 @@ def create_mcp_server(reports_dir: str):
                 description=(
                     "Post a comment or work note to a ServiceNow incident. "
                     "Use this when the user asks to 'post comment' or 'add comment'. "
-                    "The comment is posted live to ServiceNow — confirm with the user before calling."
+                    "The comment is posted live to ServiceNow, so the FIRST call (confirmed omitted/false) "
+                    "only returns a preview and posts nothing. Show the preview to the user; only after they "
+                    "explicitly approve, call again with the same arguments plus confirmed=true."
                 ),
                 inputSchema={
                     "type": "object",
@@ -260,6 +287,14 @@ def create_mcp_server(reports_dir: str):
                             "description": (
                                 "True → post as internal work note (not visible to customer); "
                                 "False → post as customer-visible comment (default: false)"
+                            ),
+                            "default": False,
+                        },
+                        "confirmed": {
+                            "type": "boolean",
+                            "description": (
+                                "Must be true to actually post. Set it only after the user has "
+                                "explicitly approved the exact text (default: false = preview only)."
                             ),
                             "default": False,
                         },
@@ -305,6 +340,13 @@ def create_mcp_server(reports_dir: str):
                         "rationale": {
                             "type": "string",
                             "description": "One sentence explaining what you are looking for (for audit logs).",
+                        },
+                        "incident_number": {
+                            "type": "string",
+                            "description": (
+                                "Always pass this during an RCA so the query is recorded as evidence "
+                                "and appended to the saved RCA report."
+                            ),
                         },
                     },
                     "required": ["sql"],
@@ -364,11 +406,22 @@ def create_mcp_server(reports_dir: str):
                 },
             ),
             Tool(
+                name="get_rca_template",
+                description=(
+                    "Return the canonical RCA report template and writing rules. Call once before "
+                    "writing the first RCA of a session; save_rca_report rejects reports that "
+                    "do not follow it."
+                ),
+                inputSchema={"type": "object", "properties": {}},
+            ),
+            Tool(
                 name="save_rca_report",
                 description=(
-                    "Save a completed RCA report to the local reports directory as a Markdown file. "
+                    "Validate and save a completed RCA report as Markdown (with incident metadata and "
+                    "the BigQuery queries recorded via query_bigquery appended as evidence). "
                     "ALWAYS call this after generating the RCA report for each incident. "
-                    "The saved path is tracked for the current session so send_rca_email can attach it. "
+                    "Reports that do not follow the get_rca_template format are rejected and NOT saved. "
+                    "Saved reports are tracked on disk in a registry so send_rca_email can attach them. "
                     "Returns the path where the report was saved."
                 ),
                 inputSchema={
@@ -392,7 +445,8 @@ def create_mcp_server(reports_dir: str):
                     "Send an HTML email to notify the human reviewer that RCA analysis is complete. "
                     "Call this AFTER all save_rca_report calls for the session are done, "
                     "and BEFORE asking the human for verification. "
-                    "Automatically attaches all RCA report files saved in this session (if any exist on disk). "
+                    "Automatically attaches every saved, not-yet-emailed RCA report (tracked on disk, so it "
+                    "works across separate CLI processes). Pass incident_numbers to limit which reports. "
                     "Requires SMTP settings in .env (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, "
                     "SMTP_FROM, SMTP_TO). Returns success/failure message."
                 ),
@@ -414,6 +468,14 @@ def create_mcp_server(reports_dir: str):
                                 "Default: 'RCA Analysis Complete — Please Review'"
                             ),
                             "default": "RCA Analysis Complete — Please Review",
+                        },
+                        "incident_numbers": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": (
+                                "Only attach reports for these incident numbers "
+                                "(default: all saved-but-unsent reports)."
+                            ),
                         },
                     },
                     "required": ["session_summary"],
@@ -601,7 +663,6 @@ async def _dispatch(name: str, arguments: dict, reports_dir: str) -> str:
         return "\n".join(lines)
 
     elif name == "post_comment":
-        reader, _cfg = _build_reader()
         number = arguments["incident_number"]
         text = arguments["text"]
         as_work_note = arguments.get("as_work_note", False)
@@ -613,6 +674,23 @@ async def _dispatch(name: str, arguments: dict, reports_dir: str) -> str:
             table = "sc_task"
         else:
             table = "incident"
+
+        # Confirmation gate: nothing is built or sent until the user approved the text.
+        confirmed = arguments.get("confirmed", False)
+        if not (confirmed is True or str(confirmed).strip().lower() == "true"):
+            kind = "work note (internal)" if as_work_note else "comment (customer-visible)"
+            return (
+                "⚠ NOT POSTED — preview only.\n"
+                f"Target: {number} (table: {table})\n"
+                f"Type: {kind}\n"
+                "Text:\n---\n"
+                f"{text}\n"
+                "---\n"
+                "Show this to the user. Only after they explicitly approve, call post_comment "
+                "again with the same arguments plus confirmed=true."
+            )
+
+        reader, _cfg = _build_reader()
 
         # Resolve sys_id — try local store first, then live lookup on correct table
         sys_id = _resolve_sys_id(number, reader, reports_dir, table=table)
@@ -639,13 +717,29 @@ async def _dispatch(name: str, arguments: dict, reports_dir: str) -> str:
         return json.dumps(ids, indent=2)
 
     elif name == "query_bigquery":
-        from tools.bigquery_tool import is_enabled, query_bigquery as bq_query, _BQ_UNAVAILABLE
+        from tools.bigquery_tool import is_enabled, _BQ_UNAVAILABLE
         if not is_enabled():
             return _BQ_UNAVAILABLE
-        return bq_query(
-            sql=arguments["sql"],
-            rationale=arguments.get("rationale", ""),
-        )
+        from tools.bigquery_tool import query_bigquery_result
+        sql = arguments["sql"]
+        rationale = arguments.get("rationale", "")
+        result = query_bigquery_result(sql, rationale)
+        incident_number = arguments.get("incident_number")
+        if incident_number:
+            try:
+                from tools import rca_report_tool
+                rca_report_tool.record_query(
+                    reports_dir,
+                    incident_number,
+                    sql=sql,
+                    rationale=rationale,
+                    success=result.success,
+                    row_count=result.row_count,
+                    error=result.error,
+                )
+            except Exception as exc:  # evidence logging must never break the query
+                logger.warning(f"[MCP] Could not record BQ evidence for {incident_number}: {exc}")
+        return result.to_llm_context()
 
     elif name == "get_schema":
         from tools.bigquery_tool import get_schema_from_file
@@ -693,28 +787,39 @@ async def _dispatch(name: str, arguments: dict, reports_dir: str) -> str:
             lines.append(f"  {os.path.basename(p)}")
         return "\n".join(lines)
 
+    elif name == "get_rca_template":
+        from tools import rca_report_tool
+        return rca_report_tool.get_rca_template()
+
     elif name == "save_rca_report":
+        from tools import rca_report_tool
         number = arguments["incident_number"]
         report_text = arguments["report_text"]
-        safe_number = number.replace("/", "_").replace("\\", "_")
 
-        rca_dir = os.path.join(reports_dir, "rca_reports")
-        os.makedirs(rca_dir, exist_ok=True)
+        incident_meta: dict[str, str] = {}
+        try:
+            _ensure_store_loaded(reports_dir)
+            from tools.incident_store import get_store
+            inc = get_store().get_incident(number)
+            raw = (inc or {}).get("incident", {}) or {}
+            for key in _REPORT_META_KEYS:
+                val = _display_value(raw.get(key))
+                if val:
+                    incident_meta[key] = val
+        except Exception as exc:
+            logger.warning(f"[MCP] Could not load incident metadata for {number}: {exc}")
 
-        from datetime import datetime
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{safe_number}_rca_{timestamp}.md"
-        filepath = os.path.join(rca_dir, filename)
+        try:
+            saved = rca_report_tool.save_report(reports_dir, number, report_text, incident_meta)
+        except ValueError as exc:
+            return f"✗ RCA report NOT saved\n{exc}"
 
-        with open(filepath, "w", encoding="utf-8") as fh:
-            fh.write(f"# RCA Report — {number}\n\n")
-            fh.write(f"_Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}_\n\n")
-            fh.write(report_text)
-
-        from tools.email_tool import register_report
-        register_report(filepath)
-
-        return f"✓ RCA report saved: {filepath}"
+        lines = [
+            f"✓ RCA report saved: {saved['path']}",
+            f"Evidence: {saved['evidence_count']} BigQuery query(ies) appended to the report.",
+        ]
+        lines.extend(f"⚠ {w}" for w in saved.get("warnings", []))
+        return "\n".join(lines)
 
     elif name == "send_rca_email":
         from config import load_smtp_config
@@ -726,10 +831,12 @@ async def _dispatch(name: str, arguments: dict, reports_dir: str) -> str:
             )
 
         from tools.email_tool import send_rca_email as _send
+        from tools import rca_report_tool
         subject = arguments.get("subject", "RCA Analysis Complete — Please Review")
         session_summary = arguments["session_summary"]
+        entries = rca_report_tool.pending_reports(reports_dir, arguments.get("incident_numbers"))
 
-        return _send(
+        result = _send(
             smtp_host=smtp.host,
             smtp_port=smtp.port,
             smtp_user=smtp.user,
@@ -739,11 +846,31 @@ async def _dispatch(name: str, arguments: dict, reports_dir: str) -> str:
             use_tls=smtp.use_tls,
             subject=subject,
             session_summary=session_summary,
+            report_entries=entries,
             verify_ssl=smtp.verify_ssl,
         )
+        if str(result).startswith("✓") and entries:
+            rca_report_tool.mark_emailed(reports_dir, [e["path"] for e in entries])
+        return result
 
     else:
         return f"Unknown tool: {name}"
+
+
+_REPORT_META_KEYS = (
+    "short_description", "state", "priority", "assignment_group", "opened_at", "sys_updated_on",
+)
+
+
+def _display_value(value) -> str:
+    """Normalise a SNOW field (str, or {"display_value": ..., "value": ...}) to text."""
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        value = value.get("display_value") or value.get("value")
+        if value is None:
+            return ""
+    return str(value).strip()
 
 
 def _ensure_store_loaded(reports_dir: str) -> None:
@@ -802,13 +929,7 @@ def _run_jsonrpc_fallback(reports_dir: str) -> None:
 
             if method == "tools/list":
                 result = {"tools": [
-                    {"name": t, "description": f"RCA tool: {t}"}
-                    for t in [
-                        "fetch_incidents", "get_incident", "get_incident_summary",
-                        "list_incidents", "search_incidents", "post_comment",
-                        "extract_identifiers",
-                        "query_bigquery", "get_schema", "list_bq_tables",
-                    ]
+                    {"name": t, "description": f"RCA tool: {t}"} for t in TOOL_NAMES
                 ]}
             elif method == "tools/call":
                 tool_name = params.get("name", "")
