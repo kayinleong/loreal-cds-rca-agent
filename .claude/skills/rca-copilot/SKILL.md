@@ -2,31 +2,36 @@
 name: rca-copilot
 description: >
   Root Cause Analysis agent for L'Oréal SPACE CDS ServiceNow incidents.
-  Uses Bash tool to call rca_copilot_agent/run_tool.py — no MCP server required.
-  Replaces snow-mcp/* MCP tool calls for environments where MCP is not allowed.
+  Uses the Bash tool to call rca_copilot_agent/run_tool.py (CLI only).
   Works on macOS and Windows.
 invocation: /rca-copilot
 ---
 
-# RCA Copilot Skill — No-MCP Mode
+# RCA Copilot Skill — CLI Mode
 
-Use this skill when the `rca_copilot_agent` MCP server is not available (e.g. L'Oréal's environment).
-All tool calls become `Bash` invocations against `run_tool.py`.
+Use this skill to investigate SPACE CDS incidents with `rca_copilot_agent`.
+All tool calls are `Bash` invocations against `run_tool.py`.
 
 ## Prerequisites
 
-1. Python virtual environment activated (see "Platform setup" below)
-2. `.env` file present with `COOKIE` and `X_USERTOKEN` set (see `.env.example`)
-3. gcloud user login with an @loreal.com account: `gcloud auth login` (BigQuery runs through the `bq` CLI; ADC is NOT needed)
+1. One-time setup done (`./setup.sh` / `setup.cmd`; see "Setup" below). No venv activation needed
+2. `.env` file present (see `.env.example`); `COOKIE` / `X_USERTOKEN` are refreshed automatically via Edge SSO at startup
+3. gcloud user login with an @loreal.com account: `gcloud auth login` (BigQuery runs through the `bq` CLI; nothing else needed)
 4. `schema.json` present in repo root
 
-## Platform setup (macOS / Windows)
+## Setup and platform notes (macOS / Windows)
 
-- **Activate the venv** (once per terminal): macOS `source .venv/bin/activate`; Windows PowerShell `.venv\Scripts\Activate.ps1`; cmd `.venv\Scripts\activate.bat`. Then `python rca_copilot_agent/run_tool.py …` works on both (forward slashes are fine on Windows).
-- **Args file creation:** prefer the `Write` tool. Terminal fallback —
+- **Prerequisites:** Python 3.10+ (64-bit), Google Cloud SDK (`gcloud`, `bq`), Microsoft Edge, git.
+- **One-command setup** (from the repo root, once per machine): macOS/Linux `./setup.sh`; Windows `setup.cmd` (double-click, or run in cmd/PowerShell); or the VS Code task "RCA: Setup (all agents)". It finds Python >= 3.10, creates `<repo>/.venv`, installs all three Copilot agents (per-agent: one failing does not block the others), then runs the doctor. Optional flags (passed through to `scripts/bootstrap.py`): `--agents`, `--skip-retrieval`, `--index-url`, `--proxy`, `--wheelhouse`, `--recreate`.
+- **Self-check (offline):** macOS/Linux `python3 scripts/doctor.py`; Windows `py -3 scripts\doctor.py`; or the VS Code task "RCA: Doctor". Checks packages, gcloud/bq, Edge, gcloud account domain, `schema.json` and `.env` presence.
+- **No venv activation needed:** `run_tool.py` re-runs itself inside `<repo>/.venv` automatically. Invoke it as `python rca_copilot_agent/run_tool.py …` (macOS: `python3`; Windows: `python` or `py -3`; forward slashes are fine on Windows).
+- **Missing package:** if `run_tool.py` prints "Missing Python package … Run ./setup.sh … or setup.cmd" (or any `ModuleNotFoundError`), run the setup command for the platform, then retry the failed command once. If setup reports failures, show the doctor output to the user and stop.
+- **Unknown tool name:** `run_tool.py` lists the valid tools.
+- **Dependencies:** `rca_copilot_agent/requirements.txt` (requests, urllib3, python-dotenv, playwright; no `playwright install` — the installed Edge is used). Manual fallback inside the venv: `python -m pip install -r rca_copilot_agent/requirements.txt`.
+- **Creating the args file:** prefer the `Write` tool. Terminal fallback —
   macOS/Linux: `mkdir -p .rca_tmp && cat > .rca_tmp/q.json <<'EOF'` … `EOF`;
   Windows PowerShell: `New-Item -ItemType Directory -Force .rca_tmp | Out-Null` then `Set-Content -Encoding utf8 -Path .rca_tmp\q.json -Value @'` … `'@` (single-quoted here-string is literal; the closing `'@` must start its own line).
-- **Google Cloud SDK** (`bq`, `gcloud`) is auto-detected from PATH and standard install dirs (incl. Windows `%LOCALAPPDATA%\Google\Cloud SDK\…`). Override with `BQ_BIN` / `GCLOUD_BIN`. Query timeout: `BQ_CLI_TIMEOUT` (default 120 s). The login is checked automatically at startup.
+- **BigQuery** runs through the `bq` CLI using gcloud user credentials: only `gcloud auth login` with an @loreal.com account is needed (checked automatically at startup; no ADC / `application-default login`). The Google Cloud SDK is auto-detected (PATH and standard install dirs, incl. Windows `%LOCALAPPDATA%\Google\Cloud SDK\…`); override with `BQ_BIN` / `GCLOUD_BIN`. Query timeout: `BQ_CLI_TIMEOUT` (default 120 s).
 - Output is UTF-8 on all platforms.
 
 ## How to pass arguments (cross-platform)
@@ -57,7 +62,7 @@ All tool calls become `Bash` invocations against `run_tool.py`.
 | **Save RCA report (MANDATORY)** | args file `{"incident_number": "INCx", "report_text": "<full report>"}` → `RT save_rca_report --json-file .rca_tmp/save_rca_report.json` |
 | **Send email (MANDATORY, once)** | args file `{"session_summary": "...", "subject": "RCA Complete — INCx"}` → `RT send_rca_email --json-file .rca_tmp/send_rca_email.json` (optional `incident_numbers` list) |
 
-## RCA Workflow (No-MCP)
+## RCA Workflow
 
 Mandatory sequence: `analyze_incident` → `get_rca_template` (once per session) → `list_bq_tables` / `get_schema` / `query_bigquery` (with `incident_number`) → write RCA → `save_rca_report` (fix & retry on `✗`) → `send_rca_email` once.
 

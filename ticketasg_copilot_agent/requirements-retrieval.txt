@@ -1,0 +1,5 @@
+# ticketasg_copilot_agent optional kNN retrieval (find_similar_incidents, build_retrieval_index,
+# retrieval signal in recommend_assignment_v2). Pulls torch (~250 MB+) so setup tolerates failure here.
+# Without it those tools return a clear error and assignment falls back gracefully.
+sentence-transformers>=2.5,<6   # embedding model (tools/retrieval_tool.py)
+numpy>=1.24,<3                  # reads retrieval_index.npz (tools/retrieval_tool.py)

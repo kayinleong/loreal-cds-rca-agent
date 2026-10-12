@@ -471,7 +471,7 @@ def _format_additional_table(ds_key: str, ds_info: dict, matched: str) -> str:
     return "\n".join(lines)
 
 
-# ── Module-level tool functions (used by MCP server) ─────────────────────────
+# ── Module-level tool functions (used by dispatcher) ─────────────────────────
 
 # Keyed by GCP project ID — one executor per billing project.
 _executors: dict[str, "SafeBigQueryExecutor"] = {}
@@ -480,7 +480,7 @@ _default_project: Optional[str] = None
 
 _BQ_UNAVAILABLE = (
     "BigQuery is not available. Ensure schema.json exists in the repo root and "
-    "gcloud ADC is configured (run: gcloud auth application-default login)."
+    "you are logged in to gcloud (run: gcloud auth login)."
 )
 
 # Regex to extract project IDs from backtick-quoted table refs, e.g.
@@ -594,7 +594,7 @@ def _kill_process_tree(proc) -> None:
 def _bq_cli_execute(sql: str, project: str, max_rows: int = 100) -> QueryResult:
     """
     Execute a pre-validated SELECT query via the bq CLI subprocess.
-    Uses gcloud auth login credentials, which often differ from ADC.
+    Uses gcloud auth login credentials, not Application Default Credentials (ADC).
     SQL is sent on stdin (bq reads it when no positional query is given), so it
     is immune to Windows command-line quoting/length problems.
     """

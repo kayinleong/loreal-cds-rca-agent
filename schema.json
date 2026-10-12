@@ -2,7 +2,7 @@
   "project": "oa-apmena-spacecds-ap-pd",
   "dataset": "space_cds_b2c_ds_replica_ae2_pd_public",
   "dialect": "GoogleSQL",
-  "auth": "gcloud Application Default Credentials (ADC) \u2014 run: gcloud auth application-default login",
+  "auth": "bq CLI on gcloud user credentials \u2014 run: gcloud auth login (with your @loreal.com account); ADC is not used",
   "note": "All tables share isocountry + signature as partition/cluster dimensions. Do not filter by recordstatus \u2014 it is an internal CDC replication field; ignore it in all queries. datastream_metadata is also a CDC replication field \u2014 ignore in business queries. For consumer queries, always filter by status = 'Active' (not recordstatus).",
   "all_datasets": {
     "oa-apmena-spacecds-ap-pd.space_cds_b2c_ds_replica_ae2_pd_public": "B2C production (primary) \u2014 consumer, purchase, loyalty, campaign, care_case. DEFAULT for all B2C RCA.",

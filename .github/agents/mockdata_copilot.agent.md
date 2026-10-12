@@ -29,6 +29,23 @@ The command pattern is:
 python mockdata_copilot_agent/run_tool.py <tool_name> --json '<JSON args>'
 ```
 
+### Setup (once per machine — one command installs all 3 Copilot agents)
+
+From the repo root run `./setup.sh` (macOS/Linux) or `setup.cmd` (Windows), or the VS Code task
+**"RCA: Setup (all agents)"**. It creates `<repo>/.venv` and installs each agent independently, so one
+agent failing does not block the others. Self-check any time with `python3 scripts/doctor.py`
+(Windows: `python scripts/doctor.py`) or the VS Code task **"RCA: Doctor"**.
+
+- Prerequisites: Python 3.10+ (64-bit), Google Cloud SDK (`gcloud auth login` with a `@loreal.com` account), git. No Edge/ServiceNow needed.
+- **No venv activation needed.** `run_tool.py` re-runs itself inside `<repo>/.venv` automatically.
+  Invoke it with `python` (Windows: `python` or `py -3`; macOS: `python3`).
+- The CLI needs no third-party packages except optional `openpyxl` (only to parse `.xlsx` seed files; otherwise paste the seed as JSON).
+- If a command prints `Missing Python package ... Run ./setup.sh ... or setup.cmd`: run the setup for your platform,
+  retry the command once; if it still fails, run `scripts/doctor.py`, show its output to the user, and stop.
+- Manual fallback: `python -m pip install -r mockdata_copilot_agent/requirements.txt`.
+- MCP mode (`mockdata_copilot_agent/mcp_server.py`) is optional and not used on L'Oréal machines (CLI only). If someone runs it:
+  `./setup.sh --with-mcp` (installs `requirements-mcp.txt`).
+
 You generate **BigQuery GoogleSQL** mock-data `INSERT` statements for the L'Oreal CDS B2C DV
 (SEA) replica and **PRESENT** them for a human to review and run manually. You **NEVER** execute
 writes. The only live database access is the read-only `lookup_consumer` existence check.

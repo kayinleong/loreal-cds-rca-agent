@@ -2,6 +2,10 @@
 """
 run_tool.py — Unified CLI for ticketasg_copilot_agent tools (no MCP server required).
 
+No venv activation needed: after running the setup script once (./setup.sh on
+macOS/Linux, setup.cmd on Windows, from the repo root) this script re-launches
+itself inside <repo>/.venv automatically, whichever Python started it.
+
 Usage:
     python ticketasg_copilot_agent/run_tool.py <tool_name> --json '<JSON args>'
 
@@ -35,8 +39,12 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
 import sys
 from pathlib import Path
+
+REEXEC_ENV = "RCA_VENV_REEXEC"
+_LOCAL_MODULES = ("config", "tools", "mcp_server")
 
 # Allow running from repo root: `python ticketasg_copilot_agent/run_tool.py`
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -45,7 +53,76 @@ logging.basicConfig(level=logging.WARNING, format="%(message)s", stream=sys.stde
 logger = logging.getLogger(__name__)
 
 
+def _repo_venv_python(repo_root, os_name=None):
+    """Path of the interpreter inside <repo_root>/.venv for the given OS."""
+    name = os_name if os_name is not None else os.name
+    sub = ("Scripts", "python.exe") if name == "nt" else ("bin", "python")
+    return Path(repo_root, ".venv", *sub)
+
+
+def _reexec_in_repo_venv(repo_root=None, prefix=None, environ=None, argv=None,
+                         script=None, os_name=None) -> None:
+    """Re-run this script inside <repo>/.venv when started by another Python.
+
+    No-op when the marker env var is set, the venv does not exist, or the
+    current interpreter already lives in that venv. Otherwise runs the venv
+    interpreter with the same arguments (stdio inherited) and exits with its
+    return code. Pure stdlib and Python 3.8-compatible so an old system Python
+    can get this far.
+    """
+    environ = os.environ if environ is None else environ
+    if environ.get(REEXEC_ENV):
+        return
+    root = Path(repo_root) if repo_root is not None else Path(__file__).resolve().parent.parent
+    venv_py = _repo_venv_python(root, os_name)
+    if not venv_py.is_file():
+        return
+    cur = os.path.realpath(prefix if prefix is not None else sys.prefix)
+    if cur == os.path.realpath(str(root / ".venv")):
+        return
+    script = script if script is not None else str(Path(__file__).resolve())
+    argv = sys.argv[1:] if argv is None else argv
+    env = dict(environ)
+    env[REEXEC_ENV] = "1"
+    try:
+        rc = subprocess.call([str(venv_py), script, *argv], env=env)
+    except KeyboardInterrupt:
+        # The child (e.g. interactive `gcloud auth login`) got the signal too.
+        sys.exit(130)
+    except OSError as e:
+        print(
+            f"`.venv` exists but its Python can't start ({type(e).__name__}: {e}). "
+            "Re-run ./setup.sh --recreate (macOS/Linux) or setup.cmd --recreate (Windows).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if rc < 0:  # child killed by signal N -> shell convention 128 + N
+        rc = 128 - rc
+    sys.exit(rc)
+
+
+def _missing_package_hint(exc: ModuleNotFoundError) -> None:
+    """Print the setup hint for a missing third-party package and exit 1."""
+    name = (exc.name or str(exc)).split(".")[0]
+    print(
+        f"Missing Python package '{name}'. Run ./setup.sh (macOS/Linux) or "
+        "setup.cmd (Windows) from the repo root, then retry.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
 def main() -> None:
+    _reexec_in_repo_venv()
+    try:
+        _main()
+    except ModuleNotFoundError as e:
+        if (e.name or "").split(".")[0] in _LOCAL_MODULES:
+            raise
+        _missing_package_hint(e)
+
+
+def _main() -> None:
     parser = argparse.ArgumentParser(
         description="Run a ticketasg_copilot_agent tool without starting an MCP server.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -77,6 +154,8 @@ def main() -> None:
     try:
         from tools.bigquery_tool import init_from_schema
         init_from_schema()
+    except ModuleNotFoundError:
+        raise
     except Exception as e:
         logger.warning(f"[BQ] Not available: {e}")
 
@@ -90,6 +169,8 @@ def main() -> None:
     try:
         from tools.auth_tool import ensure_credentials
         ensure_credentials(instance_url=cfg.instance_url)
+    except ModuleNotFoundError:
+        raise
     except Exception as e:
         logger.warning(f"[AUTH] Credential check failed: {type(e).__name__}: {e}")
 
@@ -97,6 +178,8 @@ def main() -> None:
     try:
         from tools.gcloud_tool import ensure_gcloud_auth
         ensure_gcloud_auth()
+    except ModuleNotFoundError:
+        raise
     except Exception as e:
         logger.warning(f"[GCLOUD] Auth check failed: {type(e).__name__}: {e}")
 

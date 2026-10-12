@@ -1,0 +1,7 @@
+# ticketasg_copilot_agent dependencies (CLI mode). Same ServiceNow/auth stack as rca_copilot_agent.
+# Easiest install: ./setup.sh (macOS/Linux) or setup.cmd (Windows). Manual: pip install -r this file.
+# Python 3.10+ (3.12 recommended). One requirement per line; no -r includes (setup scripts parse this file).
+requests>=2.32,<3          # ServiceNow REST client (tools/snow_reader.py)
+urllib3>=1.26,<3         # retry/SSL handling in snow_reader (also a transitive of requests)
+python-dotenv>=1.0,<2    # .env token persistence (tools/auth_tool.py)
+playwright>=1.40,<2      # automatic SSO login via the installed Edge; no `playwright install` needed

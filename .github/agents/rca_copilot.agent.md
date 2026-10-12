@@ -5,7 +5,7 @@ description: >
   Downloads incident data from ServiceNow, queries BigQuery for order/pipeline data,
   analyses comments and attachments, and generates structured RCA reports.
   Can post findings back as comments.
-  Uses run_tool.py CLI — no MCP server required. Works on macOS and Windows.
+  Uses the run_tool.py CLI. Works on macOS and Windows.
 tools:
   [
     read/readFile,
@@ -27,7 +27,7 @@ tools:
 All data operations go through `rca_copilot_agent/run_tool.py`, called with `run_in_terminal`.
 Allowed tools — nothing else:
 
-1. **Terminal** — only to run `run_tool.py` (and, once per terminal, activate the venv — see "Platform setup").
+1. **Terminal** — only to run `run_tool.py`, plus the setup command (`./setup.sh` / `setup.cmd`) and the doctor (`scripts/doctor.py`) when setup is needed — see "Setup".
 2. **File create/edit — ONLY under `.rca_tmp/`** (repo root, gitignored) to write the JSON argument files.
 3. **File read — ONLY saved RCA reports** (paths returned by `save_rca_report`).
 
@@ -84,13 +84,19 @@ Do NOT use `--json '<JSON>'` — it is POSIX-shell-only and breaks on apostrophe
 
 ---
 
-## Platform setup (macOS / Windows)
+## Setup and platform notes (macOS / Windows)
 
-- **Activate the venv first** (once per terminal): macOS `source .venv/bin/activate`; Windows PowerShell `.venv\Scripts\Activate.ps1`; Windows cmd `.venv\Scripts\activate.bat`. Then `python rca_copilot_agent/run_tool.py …` works on both (forward slashes are fine on Windows).
+- **Prerequisites:** Python 3.10+ (64-bit), Google Cloud SDK (`gcloud`, `bq`), Microsoft Edge, git.
+- **One-command setup** (from the repo root, once per machine): macOS/Linux `./setup.sh`; Windows `setup.cmd` (double-click, or run in cmd/PowerShell); or the VS Code task "RCA: Setup (all agents)". It finds Python >= 3.10, creates `<repo>/.venv`, installs all three Copilot agents (per-agent: one failing does not block the others), then runs the doctor. Optional flags (passed through to `scripts/bootstrap.py`): `--agents`, `--skip-retrieval`, `--index-url`, `--proxy`, `--wheelhouse`, `--recreate`.
+- **Self-check (offline):** macOS/Linux `python3 scripts/doctor.py`; Windows `py -3 scripts\doctor.py`; or the VS Code task "RCA: Doctor". Checks packages, gcloud/bq, Edge, gcloud account domain, `schema.json` and `.env` presence.
+- **No venv activation needed:** `run_tool.py` re-runs itself inside `<repo>/.venv` automatically. Invoke it as `python rca_copilot_agent/run_tool.py …` (macOS: `python3`; Windows: `python` or `py -3`; forward slashes are fine on Windows).
+- **Missing package:** if `run_tool.py` prints "Missing Python package … Run ./setup.sh … or setup.cmd" (or any `ModuleNotFoundError`), run the setup command for the platform, then retry the failed command once. If setup reports failures, show the doctor output to the user and stop.
+- **Unknown tool name:** `run_tool.py` lists the valid tools.
+- **Dependencies:** `rca_copilot_agent/requirements.txt` (requests, urllib3, python-dotenv, playwright; no `playwright install` — the installed Edge is used). Manual fallback inside the venv: `python -m pip install -r rca_copilot_agent/requirements.txt`.
 - **Creating the args file:** prefer the file create/edit tool. Terminal fallback —
   macOS/Linux: `mkdir -p .rca_tmp && cat > .rca_tmp/q.json <<'EOF'` … `EOF`;
   Windows PowerShell: `New-Item -ItemType Directory -Force .rca_tmp | Out-Null` then `Set-Content -Encoding utf8 -Path .rca_tmp\q.json -Value @'` … `'@` (single-quoted here-string is literal; the closing `'@` must start its own line).
-- **BigQuery** runs through the `bq` CLI using gcloud user credentials: `gcloud auth login` with an @loreal.com account (checked automatically at startup; ADC is NOT used). The Google Cloud SDK is auto-detected (PATH and standard install dirs, incl. Windows `%LOCALAPPDATA%\Google\Cloud SDK\…`); override with `BQ_BIN` / `GCLOUD_BIN`. Query timeout: `BQ_CLI_TIMEOUT` (default 120 s).
+- **BigQuery** runs through the `bq` CLI using gcloud user credentials: only `gcloud auth login` with an @loreal.com account is needed (checked automatically at startup; no ADC / `application-default login`). The Google Cloud SDK is auto-detected (PATH and standard install dirs, incl. Windows `%LOCALAPPDATA%\Google\Cloud SDK\…`); override with `BQ_BIN` / `GCLOUD_BIN`. Query timeout: `BQ_CLI_TIMEOUT` (default 120 s).
 - Output is UTF-8 on all platforms.
 
 ---

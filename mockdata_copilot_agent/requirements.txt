@@ -1,0 +1,4 @@
+# mockdata_copilot_agent dependencies (CLI mode). The CLI is otherwise stdlib-only.
+# Easiest install: ./setup.sh (macOS/Linux) or setup.cmd (Windows). Manual: pip install -r this file.
+# Python 3.10+ (3.12 recommended). One requirement per line; no -r includes (setup scripts parse this file).
+openpyxl>=3.1,<4   # parse .xlsx seed files (tools/mockdata_tool.py); without it paste the seed as JSON
