@@ -22,9 +22,26 @@ existence check.
 
 GCP target: project `oa-apmena-spacecds-ap-dv`, dataset `space_cds_b2c_ds_replica_ase1_dv_public`.
 
+## Setup (once per machine — one command installs all 3 Copilot agents)
+
+From the repo root run `./setup.sh` (macOS/Linux) or `setup.cmd` (Windows), or the VS Code task
+**"RCA: Setup (all agents)"**. It creates `<repo>/.venv` and installs each agent independently, so one
+agent failing does not block the others. Self-check any time with `python3 scripts/doctor.py`
+(Windows: `python scripts/doctor.py`) or the VS Code task **"RCA: Doctor"**.
+
+- Prerequisites: Python 3.10+ (64-bit), Google Cloud SDK (`gcloud auth login` with a `@loreal.com` account), git. No Edge/ServiceNow needed.
+- **No venv activation needed.** `run_tool.py` re-runs itself inside `<repo>/.venv` automatically.
+  Invoke it with `python` (Windows: `python` or `py -3`; macOS: `python3`).
+- The CLI needs no third-party packages except optional `openpyxl` (only to parse `.xlsx` seed files; otherwise paste the seed as JSON).
+- If a command prints `Missing Python package ... Run ./setup.sh ... or setup.cmd`: run the setup for your platform,
+  retry the command once; if it still fails, run `scripts/doctor.py`, show its output to the user, and stop.
+- Manual fallback: `python -m pip install -r mockdata_copilot_agent/requirements.txt`.
+- MCP mode (`mockdata_copilot_agent/mcp_server.py`) is optional and not used on L'Oréal machines (CLI only). If someone runs it:
+  `./setup.sh --with-mcp` (installs `requirements-mcp.txt`).
+
 ## Prerequisites
 
-1. Python virtual environment activated: `source .venv/bin/activate`
+1. Setup done once: `./setup.sh` / `setup.cmd` (see **Setup** below; no venv activation needed — verify with `scripts/doctor.py`)
 2. `gcloud auth application-default login` with a `@loreal.com` account — needed for the
    read-only `fetch_seed` and `lookup_consumer` checks. The generate/save tools run fully
    offline with no credentials.

@@ -1,7 +1,7 @@
 # AGENTS.md — Ticket Assignment Copilot Agent
 
 > Instruction schema for GitHub Copilot (or any MCP-aware LLM client).
-> All LLM reasoning stays in the client. This server exposes only pure-function tools.
+> All LLM reasoning stays in the client. The tools are pure functions, called via `run_tool.py` (CLI) or the optional `mcp_server.py`.
 
 ## Purpose
 
@@ -491,6 +491,26 @@ python ticketasg_copilot_agent/run_tool.py send_assignment_email \
 uses `run_in_terminal` to call `run_tool.py` — no MCP server required.
 
 ## Environment Setup
+
+### Install (once per machine — one command installs all 3 Copilot agents)
+
+From the repo root run `./setup.sh` (macOS/Linux) or `setup.cmd` (Windows), or the VS Code task
+**"RCA: Setup (all agents)"**. It creates `<repo>/.venv` and installs each agent independently, so one
+agent failing does not block the others. Self-check any time with `python3 scripts/doctor.py`
+(Windows: `python scripts/doctor.py`) or the VS Code task **"RCA: Doctor"**.
+
+- Prerequisites: Python 3.10+ (64-bit), Google Cloud SDK (`gcloud auth login` with a `@loreal.com` account), Microsoft Edge (ServiceNow SSO login), git.
+- **No venv activation needed.** `run_tool.py` re-runs itself inside `<repo>/.venv` automatically.
+  Invoke it with `python` (Windows: `python` or `py -3`; macOS: `python3`).
+- kNN retrieval (`find_similar_incidents`, `build_retrieval_index`, the kNN signal in `recommend_assignment_v2`) needs
+  `ticketasg_copilot_agent/requirements-retrieval.txt` (sentence-transformers, which pulls torch — a large download).
+  Setup installs it by default; `./setup.sh --skip-retrieval` skips it. If it is missing or fails, the agent still works:
+  those retrieval tools return an error and `recommend_assignment_v2` degrades to the rules + keyword scorer.
+- If a command prints `Missing Python package ... Run ./setup.sh ... or setup.cmd`: run the setup for your platform,
+  retry the command once; if it still fails, run `scripts/doctor.py`, show its output to the user, and stop.
+- Manual fallback: `python -m pip install -r ticketasg_copilot_agent/requirements.txt`.
+- MCP mode (`ticketasg_copilot_agent/mcp_server.py`) is optional and not used on L'Oréal machines (CLI only). If someone runs it:
+  `./setup.sh --with-mcp` (installs `requirements-mcp.txt`).
 
 ### ServiceNow Credentials (auto-refreshed)
 
