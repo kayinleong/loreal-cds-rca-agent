@@ -1,7 +1,0 @@
-{
-  "chat.mcp.serverSampling": {
-    "space-cds-etl-core-feature-rca-agent/.vscode/mcp.json: snow-mcp": {
-      "allowedModels": ["copilot/auto"]
-    }
-  }
-}
