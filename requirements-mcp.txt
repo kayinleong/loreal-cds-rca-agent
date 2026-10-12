@@ -1,0 +1,6 @@
+# OPT-IN: only needed for MCP server mode:
+#   python ticketasg_copilot_agent/mcp_server.py   /   python mockdata_copilot_agent/mcp_server.py
+# L'Oreal machines use the CLI (run_tool.py) and do not need this. Install via setup --with-mcp.
+# Not included by the root requirements.txt.
+# <2 is mandatory: mcp 2.x removed Server.list_tools and breaks these servers (quick-kayinleong-028 research).
+mcp>=1.2,<2   # Model Context Protocol SDK (servers use mcp.server 1.x API)
