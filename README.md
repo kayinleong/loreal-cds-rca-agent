@@ -47,3 +47,17 @@ Reports and downloads stay local and are gitignored (they may contain personal d
 ## For developers
 
 See `CLAUDE.md` and each package's `AGENTS.md`. Tests: `python3 -m unittest discover -s scripts/tests`.
+
+### Building a release zip
+
+Release zips are built from `main` into `release/` (gitignored — share the zip directly, don't commit it). Only
+committed files are included (never `.env`, `.venv`, reports or attachments); `.planning/`, `.serena/` and test
+folders are left out:
+
+```bash
+V=$(date +%Y.%m.%d); N="loreal-cds-rca-agent-$V"; mkdir -p release
+git archive --format=zip --prefix="$N/" -o "release/$N.zip" main -- . ':(exclude).planning' ':(exclude).serena' ':(exclude,glob)**/tests/**'
+(cd release && shasum -a 256 "$N.zip" > "$N.zip.sha256")
+```
+
+Check it by unzipping into an empty folder and running `./setup.sh` / `setup.cmd` there.
