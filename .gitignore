@@ -206,3 +206,6 @@ mockdata/
 
 # RCA scratch args files (ticket text / PII) - never commit
 .rca_tmp/
+
+# Built release zips (shared manually, never committed)
+release/
